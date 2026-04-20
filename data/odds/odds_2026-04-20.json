@@ -5,7 +5,7 @@
     "home_team": "Brighton and Hove Albion",
     "away_team": "Chelsea",
     "commence_time": "2026-04-21T19:00:00Z",
-    "odds_home": 2.54,
+    "odds_home": 2.56,
     "odds_draw": 3.87,
     "odds_away": 2.82,
     "bookmakers_count": 24
@@ -73,7 +73,7 @@
     "commence_time": "2026-04-25T14:00:00Z",
     "odds_home": 2.6,
     "odds_draw": 3.55,
-    "odds_away": 2.98,
+    "odds_away": 3.0,
     "bookmakers_count": 24
   },
   {
@@ -139,7 +139,7 @@
     "commence_time": "2026-05-02T14:00:00Z",
     "odds_home": 1.98,
     "odds_draw": 3.9,
-    "odds_away": 4.11,
+    "odds_away": 4.1,
     "bookmakers_count": 18
   },
   {
@@ -434,9 +434,9 @@
     "home_team": "Athletic Bilbao",
     "away_team": "CA Osasuna",
     "commence_time": "2026-04-21T17:00:00Z",
-    "odds_home": 1.96,
-    "odds_draw": 3.55,
-    "odds_away": 5.0,
+    "odds_home": 1.94,
+    "odds_draw": 3.6,
+    "odds_away": 5.1,
     "bookmakers_count": 21
   },
   {
@@ -456,9 +456,9 @@
     "home_team": "Real Madrid",
     "away_team": "Alavés",
     "commence_time": "2026-04-21T19:30:00Z",
-    "odds_home": 1.32,
+    "odds_home": 1.28,
     "odds_draw": 6.8,
-    "odds_away": 12.5,
+    "odds_away": 13.0,
     "bookmakers_count": 21
   },
   {
@@ -467,7 +467,7 @@
     "home_team": "Girona",
     "away_team": "Real Betis",
     "commence_time": "2026-04-21T19:30:00Z",
-    "odds_home": 2.61,
+    "odds_home": 2.55,
     "odds_draw": 3.5,
     "odds_away": 3.1,
     "bookmakers_count": 20
@@ -688,8 +688,8 @@
     "away_team": "Lecce",
     "commence_time": "2026-04-25T18:45:00Z",
     "odds_home": 2.74,
-    "odds_draw": 3.2,
-    "odds_away": 3.17,
+    "odds_draw": 3.19,
+    "odds_away": 3.15,
     "bookmakers_count": 24
   },
   {
