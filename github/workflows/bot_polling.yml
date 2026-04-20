@@ -1,0 +1,49 @@
+name: Telegram Bot Polling
+
+on:
+  schedule:
+    # Co godzinę – sprawdza nowe komendy od użytkownika
+    # Zużycie: ~720 uruchomień × ~0.3 min = ~216 min/miesiąc (mieści się w 2000 darmowych)
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Poll Telegram and respond to commands
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
+          BANKROLL:         ${{ secrets.BANKROLL }}
+        run: python -c "
+import sys; sys.path.insert(0, '.')
+from notify.bot_handler import poll_and_respond
+poll_and_respond()
+"
+
+      - name: Commit updated offset and finance data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/results/
+          git diff --staged --quiet || git commit -m "bot: process commands $(date +'%Y-%m-%d %H:%M')"
+          git push
