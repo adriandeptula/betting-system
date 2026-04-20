@@ -34,11 +34,13 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
           BANKROLL:         ${{ secrets.BANKROLL }}
-        run: python -c "
-import sys; sys.path.insert(0, '.')
-from notify.bot_handler import poll_and_respond
-poll_and_respond()
-"
+          
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from notify.bot_handler import poll_and_respond
+          poll_and_respond()
+          "
 
       - name: Commit updated offset and finance data
         run: |
