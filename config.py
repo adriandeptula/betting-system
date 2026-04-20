@@ -1,0 +1,75 @@
+"""
+config.py – Centralna konfiguracja systemu.
+Wszystkie parametry w jednym miejscu.
+"""
+import os
+
+# ── Ligi ────────────────────────────────────────────────────────────────────
+LEAGUES = {
+    "EPL": {
+        "fd_code": "E0",
+        "odds_key": "soccer_epl",
+        "name": "Premier League",
+        "country": "England",
+    },
+    "BL": {
+        "fd_code": "D1",
+        "odds_key": "soccer_germany_bundesliga",
+        "name": "Bundesliga",
+        "country": "Germany",
+    },
+    "LL": {
+        "fd_code": "SP1",
+        "odds_key": "soccer_spain_la_liga",
+        "name": "La Liga",
+        "country": "Spain",
+    },
+    "SA": {
+        "fd_code": "I1",
+        "odds_key": "soccer_italy_serie_a",
+        "name": "Serie A",
+        "country": "Italy",
+    },
+    "EK": {
+        "fd_code": "P1",
+        "odds_key": "soccer_poland_ekstraklasa",
+        "name": "Ekstraklasa",
+        "country": "Poland",
+    },
+}
+
+# Sezony historyczne do pobrania (format football-data.co.uk)
+SEASONS = ["2122", "2223", "2324", "2425"]
+
+# ── API ──────────────────────────────────────────────────────────────────────
+ODDS_API_KEY      = os.environ.get("ODDS_API_KEY", "")
+ODDS_API_BASE     = "https://api.the-odds-api.com/v4"
+ODDS_API_REGIONS  = "eu"
+ODDS_API_MARKETS  = "h2h"
+
+API_FOOTBALL_KEY  = os.environ.get("API_FOOTBALL_KEY", "")
+
+# ── Telegram ─────────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+FORM_WINDOW       = 5      # Ostatnie N meczów do obliczania formy
+MIN_EDGE          = 0.05   # Minimalna przewaga nad kursem bukmachera (5%)
+MIN_MODEL_PROB    = 0.40   # Minimalna pewność modelu (40%)
+KELLY_FRACTION    = 0.25   # Frakcja Kelly (0.25 = bezpieczna)
+MAX_BET_PCT       = 0.03   # Max 3% bankrollu na jeden kupon
+BANKROLL          = float(os.environ.get("BANKROLL", "1000"))  # PLN
+
+# ── Kupon ─────────────────────────────────────────────────────────────────────
+MAX_LEGS          = 3      # Max nogi w jednym parlayach
+MIN_ODDS          = 1.50   # Min kurs na nogę
+MAX_ODDS          = 3.20   # Max kurs na nogę (unikamy longshots)
+COUPONS_PER_WEEK  = 3      # Ile kuponów tygodniowo
+
+# ── Ścieżki plików ────────────────────────────────────────────────────────────
+DATA_RAW          = "data/raw"
+DATA_PROCESSED    = "data/processed"
+DATA_ODDS         = "data/odds"
+DATA_RESULTS      = "data/results"
+MODEL_PATH        = "data/model/model.pkl"

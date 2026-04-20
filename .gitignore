@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Środowisko wirtualne
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Dane – przechowywane w repo ale nie chcemy przypadkowych
+# Odkomentuj poniższe jeśli dane mają być poza repo:
+# data/raw/
+# data/processed/
+# data/odds/
+
+# Model jest w repo (mały plik .pkl ~1-5MB)
+# Jeśli urośnie, dodaj: data/model/
+
+# Klucze API – NIGDY nie commituj
+.env
+*.env
+secrets.json
+api_keys.txt
+
+# Logi
+*.log
+logs/
