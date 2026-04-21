@@ -44,10 +44,10 @@ LEAGUES = {
 }
 
 # Sezony historyczne do pobrania (format football-data.co.uk)
-SEASONS = ["2122", "2223", "2324", "2425"]
+SEASONS = ["2122", "2223", "2324", "2425", "2526"]
 
 # Aktualny sezon dla API-Football (format YYYY)
-CURRENT_SEASON = 2024
+CURRENT_SEASON = 2025
 
 # ── API – The Odds API ───────────────────────────────────────────────────────
 # 2 klucze (2 konta) – system automatycznie przełącza się na drugi
