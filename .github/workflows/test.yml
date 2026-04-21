@@ -1,0 +1,6 @@
+- name: Test secret
+  env:
+    MY_SECRET: ${{ secrets.TELEGRAM_CHAT_ID }}
+  run: |
+    echo "First char: ${MY_SECRET:0:1}"
+    # wypisze pierwszy znak, reszta będzie ukryta
