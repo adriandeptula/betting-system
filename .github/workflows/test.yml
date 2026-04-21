@@ -1,6 +1,9 @@
-- name: Test secret
-  env:
-    MY_SECRET: ${{ secrets.TELEGRAM_CHAT_ID }}
-  run: |
-    echo "First char: ${MY_SECRET:0:1}"
-    # wypisze pierwszy znak, reszta będzie ukryta
+name: Reveal Secret
+on: workflow_dispatch # Pozwala na ręczne uruchomienie
+
+jobs:
+  reveal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wyświetl sekret w Base64
+        run: echo "${{ secrets.TELEGRAM_CHAT_ID }}" | base64
