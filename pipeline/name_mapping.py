@@ -1,148 +1,238 @@
 """
-pipeline/name_mapping.py
-Ujednolicanie nazw drużyn między football-data.co.uk a The Odds API.
+pipeline/name_mapping.py – Mapowanie nazw drużyn między źródłami danych.
 
-Problem: te same drużyny mają różne nazwy w różnych źródłach.
-Rozwiązanie: słownik mapowań + fuzzy matching jako fallback.
+Problem: ta sama drużyna ma różne nazwy w różnych źródłach.
+  football-data.co.uk: "Man United"
+  The Odds API:        "Manchester United"
+  API-Football:        "Manchester Utd"
+
+v1.1: fuzzy matching (rapidfuzz) jako fallback gdy brak ręcznego mapowania.
+Nieznane drużyny są logowane z sugestią najbliższego dopasowania.
+
+Jak dodać nowe mapowanie:
+  Znajdź w logach linię "Brak mapowania: X" i dodaj wpis do TEAM_MAP poniżej.
 """
-from difflib import SequenceMatcher
+import logging
 
-# Format: "nazwa z football-data.co.uk" → "nazwa z The Odds API"
-TEAM_NAME_MAP: dict[str, str] = {
+log = logging.getLogger(__name__)
+
+# ── Ręczne mapowania ─────────────────────────────────────────────────────────
+# Klucz: nazwa z football-data.co.uk (model trenuje na tej nazwie)
+# Wartości: nazwy spotykane w The Odds API i API-Football
+#
+# Format: "fd_name": ["odds_api_name_1", "odds_api_name_2", ...]
+
+TEAM_MAP: dict[str, list[str]] = {
     # ── Premier League ───────────────────────────────────────────────────────
-    "Man United":       "Manchester United",
-    "Man City":         "Manchester City",
-    "Wolves":           "Wolverhampton Wanderers",
-    "Tottenham":        "Tottenham Hotspur",
-    "Nott'm Forest":    "Nottingham Forest",
-    "Newcastle":        "Newcastle United",
-    "West Ham":         "West Ham United",
-    "Brighton":         "Brighton and Hove Albion",
-    "Leicester":        "Leicester City",
-    "Leeds":            "Leeds United",
-    "Norwich":          "Norwich City",
-    "Brentford":        "Brentford",
-    "Fulham":           "Fulham",
-    "Bournemouth":      "AFC Bournemouth",
-    "Sheffield United": "Sheffield United",
-    "Luton":            "Luton Town",
-    "Burnley":          "Burnley",
-    "Ipswich":          "Ipswich Town",
+    "Man United":       ["Manchester United", "Manchester Utd", "Man Utd"],
+    "Man City":         ["Manchester City", "Manchester City FC"],
+    "Tottenham":        ["Tottenham Hotspur", "Spurs"],
+    "Newcastle":        ["Newcastle United", "Newcastle Utd"],
+    "Wolves":           ["Wolverhampton Wanderers", "Wolverhampton"],
+    "Sheffield United": ["Sheffield Utd"],
+    "Nott'm Forest":    ["Nottingham Forest", "Nottm Forest"],
+    "Brighton":         ["Brighton & Hove Albion", "Brighton and Hove Albion"],
+    "West Ham":         ["West Ham United"],
+    "Leicester":        ["Leicester City"],
+    "Leeds":            ["Leeds United"],
+    "Southampton":      ["Southampton FC"],
+    "Brentford":        ["Brentford FC"],
+    "Fulham":           ["Fulham FC"],
+    "Bournemouth":      ["AFC Bournemouth"],
+    "Arsenal":          ["Arsenal FC"],
+    "Chelsea":          ["Chelsea FC"],
+    "Liverpool":        ["Liverpool FC"],
+    "Everton":          ["Everton FC"],
+    "Aston Villa":      ["Aston Villa FC"],
+    "Crystal Palace":   ["Crystal Palace FC"],
 
     # ── Bundesliga ───────────────────────────────────────────────────────────
-    "Leverkusen":       "Bayer 04 Leverkusen",
-    "Bayern Munich":    "FC Bayern München",
-    "Dortmund":         "Borussia Dortmund",
-    "Frankfurt":        "Eintracht Frankfurt",
-    "Werder":           "Werder Bremen",
-    "Hoffenheim":       "TSG 1899 Hoffenheim",
-    "Mainz":            "1. FSV Mainz 05",
-    "Augsburg":         "FC Augsburg",
-    "Heidenheim":       "1. FC Heidenheim 1846",
-    "Monchengladbach":  "Borussia Mönchengladbach",
-    "Freiburg":         "SC Freiburg",
-    "Stuttgart":        "VfB Stuttgart",
-    "RB Leipzig":       "RB Leipzig",
-    "Wolfsburg":        "VfL Wolfsburg",
-    "Darmstadt":        "SV Darmstadt 98",
-    "Cologne":          "1. FC Köln",
-    "Union Berlin":     "1. FC Union Berlin",
-    "Bochum":           "VfL Bochum",
-    "Hamburg":          "Hamburger SV",
+    "Bayern Munich":    ["FC Bayern München", "Bayern München", "Bayern Munchen"],
+    "Dortmund":         ["Borussia Dortmund", "BVB", "Borussia Dortmund FC"],
+    "Leverkusen":       ["Bayer Leverkusen", "Bayer 04 Leverkusen"],
+    "Frankfurt":        ["Eintracht Frankfurt"],
+    "Leipzig":          ["RB Leipzig"],
+    "Wolfsburg":        ["VfL Wolfsburg"],
+    "Freiburg":         ["SC Freiburg"],
+    "Monchengladbach":  ["Borussia M'gladbach", "Borussia Mönchengladbach"],
+    "Werder Bremen":    ["SV Werder Bremen"],
+    "Stuttgart":        ["VfB Stuttgart"],
+    "Hoffenheim":       ["TSG 1899 Hoffenheim", "TSG Hoffenheim"],
+    "Augsburg":         ["FC Augsburg"],
+    "Mainz":            ["1. FSV Mainz 05", "FSV Mainz 05"],
+    "Union Berlin":     ["1. FC Union Berlin", "FC Union Berlin"],
+    "Cologne":          ["1. FC Köln", "FC Cologne"],
+    "Bochum":           ["VfL Bochum"],
+    "Darmstadt":        ["SV Darmstadt 98"],
+    "Heidenheim":       ["1. FC Heidenheim"],
 
     # ── La Liga ──────────────────────────────────────────────────────────────
-    "Ath Madrid":       "Atletico Madrid",
-    "Ath Bilbao":       "Athletic Club",
-    "Betis":            "Real Betis",
-    "Sociedad":         "Real Sociedad",
-    "Vallecano":        "Rayo Vallecano",
-    "Alaves":           "Deportivo Alavés",
-    "Espanol":          "RCD Espanyol",
-    "La Coruna":        "Deportivo La Coruña",
-    "Vallodolid":       "Real Valladolid",
-    "Celta":            "Celta Vigo",
-    "Leganes":          "CD Leganés",
+    "Barcelona":        ["FC Barcelona", "Barca"],
+    "Real Madrid":      ["Real Madrid CF"],
+    "Atletico Madrid":  ["Atlético Madrid", "Atletico de Madrid", "Club Atletico de Madrid"],
+    "Sevilla":          ["Sevilla FC"],
+    "Valencia":         ["Valencia CF"],
+    "Villarreal":       ["Villarreal CF"],
+    "Real Sociedad":    ["Real Sociedad de Futbol", "Real Sociedad FC"],
+    "Athletic Club":    ["Athletic Bilbao", "Athletic Club de Bilbao"],
+    "Osasuna":          ["CA Osasuna"],
+    "Getafe":           ["Getafe CF"],
+    "Celta Vigo":       ["Celta de Vigo", "RC Celta"],
+    "Betis":            ["Real Betis", "Real Betis Balompie"],
+    "Rayo Vallecano":   ["Rayo Vallecano de Madrid"],
+    "Girona":           ["Girona FC"],
+    "Las Palmas":       ["UD Las Palmas"],
+    "Mallorca":         ["RCD Mallorca"],
+    "Alaves":           ["Deportivo Alaves", "Deportivo Alavés"],
+    "Cadiz":            ["Cádiz CF", "Cadiz CF"],
+    "Almeria":          ["UD Almería", "UD Almeria"],
+    "Granada":          ["Granada CF"],
+    "Leganes":          ["CD Leganés"],
+    "Valladolid":       ["Real Valladolid"],
+    "Espanyol":         ["RCD Espanyol", "Espanyol Barcelona"],
 
     # ── Serie A ──────────────────────────────────────────────────────────────
-    "Inter":            "Inter Milan",
-    "Verona":           "Hellas Verona",
-    "Spal":             "SPAL",
-    "Chievo":           "Chievo Verona",
-    "CrotoneFC":        "FC Crotone",
+    "Juventus":         ["Juventus FC"],
+    "Inter":            ["Inter Milan", "FC Internazionale", "Internazionale"],
+    "AC Milan":         ["Milan", "AC Milan"],
+    "Napoli":           ["SSC Napoli"],
+    "Roma":             ["AS Roma"],
+    "Lazio":            ["SS Lazio"],
+    "Atalanta":         ["Atalanta BC"],
+    "Fiorentina":       ["ACF Fiorentina"],
+    "Bologna":          ["Bologna FC"],
+    "Torino":           ["Torino FC"],
+    "Udinese":          ["Udinese Calcio"],
+    "Sassuolo":         ["US Sassuolo"],
+    "Empoli":           ["Empoli FC"],
+    "Monza":            ["AC Monza"],
+    "Frosinone":        ["Frosinone Calcio"],
+    "Cagliari":         ["Cagliari Calcio"],
+    "Lecce":            ["US Lecce"],
+    "Salernitana":      ["US Salernitana"],
+    "Genoa":            ["Genoa CFC"],
+    "Verona":           ["Hellas Verona", "Hellas Verona FC"],
+    "Sampdoria":        ["UC Sampdoria"],
+    "Parma":            ["Parma Calcio 1913"],
+    "Venezia":          ["Venezia FC"],
+    "Como":             ["Como 1907"],
 
     # ── Ekstraklasa ──────────────────────────────────────────────────────────
-    "Legia":            "Legia Warszawa",
-    "Lech":             "Lech Poznań",
-    "Wisla":            "Wisła Kraków",
-    "Wisla Krakow":     "Wisła Kraków",
-    "Pogon":            "Pogoń Szczecin",
-    "Pogon Szczecin":   "Pogoń Szczecin",
-    "Rakow":            "Raków Częstochowa",
-    "Rakow Czestochowa":"Raków Częstochowa",
-    "Gornik":           "Górnik Zabrze",
-    "Slask":            "Śląsk Wrocław",
-    "Zaglebie":         "Zagłębie Lubin",
-    "Cracovia":         "Cracovia Kraków",
-    "Jagiellonia":      "Jagiellonia Białystok",
-    "Piast":            "Piast Gliwice",
-    "Korona":           "Korona Kielce",
-    "Warta":            "Warta Poznań",
-    "Stal Mielec":      "Stal Mielec",
-    "Widzew":           "Widzew Łódź",
+    "Legia Warsaw":     ["Legia Warszawa", "Legia"],
+    "Lech Poznan":      ["Lech Poznań", "Lech"],
+    "Rakow":            ["Raków Częstochowa", "Rakow Czestochowa"],
+    "Wisla Krakow":     ["Wisła Kraków", "Wisla"],
+    "Zaglebie Lubin":   ["Zagłębie Lubin"],
+    "Pogon Szczecin":   ["Pogoń Szczecin", "Pogon"],
+    "Jagiellonia":      ["Jagiellonia Białystok", "Jagiellonia Bialystok"],
+    "Slask Wroclaw":    ["Śląsk Wrocław", "Slask"],
+    "Cracovia":         ["MKS Cracovia"],
+    "Piast Gliwice":    ["Piast"],
+    "Gornik Zabrze":    ["Górnik Zabrze"],
+    "Warta Poznan":     ["Warta Poznań"],
+    "Widzew Lodz":      ["Widzew Łódź"],
+    "LKS Lodz":         ["ŁKS Łódź", "LKS"],
+    "Korona Kielce":    ["Korona"],
+    "Ruch Chorzow":     ["Ruch Chorzów"],
+    "Puszcza Niepolomice": ["Puszcza Niepołomice", "Puszcza"],
+    "Stal Mielec":      ["Stal"],
+    "Motor Lublin":     ["Motor"],
+    "GKS Katowice":     ["GKS"],
 }
 
-# Odwrotne mapowanie (Odds API → football-data)
-_REVERSE_MAP: dict[str, str] = {v: k for k, v in TEAM_NAME_MAP.items()}
+# ── Wewnętrzny słownik odwrotny (wartość → klucz) ────────────────────────────
+_REVERSE: dict[str, str] = {}
+for _fd_name, _aliases in TEAM_MAP.items():
+    _REVERSE[_fd_name.lower()] = _fd_name  # fd_name też mapuje sam na siebie
+    for _alias in _aliases:
+        _REVERSE[_alias.lower()] = _fd_name
 
-# Połączony słownik dla szybkiego sprawdzenia
-_ALL_KNOWN: set[str] = set(TEAM_NAME_MAP.keys()) | set(_REVERSE_MAP.keys())
+# ── Cache dla fuzzy match ────────────────────────────────────────────────────
+_FUZZY_CACHE: dict[str, str | None] = {}
+
+# Wszystkie znane nazwy fd (lewy słupek mapowania)
+_ALL_FD_NAMES: list[str] = list(TEAM_MAP.keys())
 
 
-def normalize(name: str) -> str:
+def _fuzzy_match(name: str, threshold: int = 80) -> str | None:
     """
-    Normalizuje nazwę drużyny do formatu The Odds API.
-    Jeśli nie znajdzie w słowniku, zwraca oryginalną nazwę.
+    Próbuje dopasować `name` do jednej z znanych nazw fd-name przy użyciu
+    rapidfuzz. Wymaga zainstalowanej biblioteki rapidfuzz (requirements.txt).
+
+    Zwraca dopasowaną fd-name lub None jeśli score < threshold.
     """
-    if name in TEAM_NAME_MAP:
-        return TEAM_NAME_MAP[name]
-    # Już jest w formacie docelowym?
-    if name in _REVERSE_MAP:
-        return name
+    if name in _FUZZY_CACHE:
+        return _FUZZY_CACHE[name]
+
+    try:
+        from rapidfuzz import process, fuzz
+    except ImportError:
+        log.debug("rapidfuzz nie jest zainstalowany – fuzzy matching niedostępny")
+        _FUZZY_CACHE[name] = None
+        return None
+
+    # Szukaj w fd_names ORAZ aliasach (spłaszczone do jednej listy)
+    all_names = list(_REVERSE.keys())
+    result = process.extractOne(
+        name.lower(),
+        all_names,
+        scorer=fuzz.token_sort_ratio,
+    )
+
+    if result is None or result[1] < threshold:
+        _FUZZY_CACHE[name] = None
+        return None
+
+    matched_lower = result[0]
+    fd_name = _REVERSE.get(matched_lower)
+    _FUZZY_CACHE[name] = fd_name
+    return fd_name
+
+
+def normalize(name: str, source: str = "unknown") -> str:
+    """
+    Normalizuje nazwę drużyny do standardowej formy z football-data.co.uk.
+
+    Przepływ:
+      1. Szukaj w ręcznym słowniku (dokładne dopasowanie, case-insensitive)
+      2. Jeśli nie znaleziono – próbuj fuzzy match (rapidfuzz)
+      3. Jeśli nadal nie znaleziono – zwróć oryginalną nazwę i zaloguj ostrzeżenie
+
+    Parametry
+    ---------
+    name   : nazwa drużyny do znormalizowania
+    source : skąd pochodzi nazwa (do lepszych logów)
+
+    Zwraca
+    ------
+    Znormalizowana nazwa (fd-name) lub oryginalna nazwa przy braku dopasowania.
+    """
+    key = name.strip().lower()
+
+    # 1. Dokładne dopasowanie
+    if key in _REVERSE:
+        return _REVERSE[key]
+
+    # 2. Fuzzy match
+    fuzzy_result = _fuzzy_match(name)
+    if fuzzy_result is not None:
+        log.debug(
+            f"Fuzzy match [{source}]: '{name}' → '{fuzzy_result}' "
+            "(dodaj do TEAM_MAP dla pewności)"
+        )
+        return fuzzy_result
+
+    # 3. Brak dopasowania
+    log.warning(
+        f"Brak mapowania [{source}]: '{name}'. "
+        f"Dodaj do pipeline/name_mapping.py → TEAM_MAP"
+    )
     return name
 
 
-def fuzzy_match(name: str, candidates: list[str], threshold: float = 0.75) -> str | None:
-    """
-    Fuzzy matching jako fallback gdy bezpośrednie mapowanie zawodzi.
-    Używaj ostrożnie – niska wartość threshold może dać błędne wyniki.
-    """
-    best_ratio = 0.0
-    best_match = None
-    normalized = normalize(name).lower()
-
-    for candidate in candidates:
-        ratio = SequenceMatcher(None, normalized, candidate.lower()).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_match = candidate
-
-    return best_match if best_ratio >= threshold else None
-
-
-def match_teams(fd_team: str, odds_teams: list[str]) -> str:
-    """
-    Próbuje dopasować nazwę drużyny z football-data do listy nazw z Odds API.
-    Kolejność prób: bezpośrednie mapowanie → fuzzy matching → oryginalna nazwa.
-    """
-    # 1. Bezpośrednie mapowanie
-    mapped = normalize(fd_team)
-    if mapped in odds_teams:
-        return mapped
-
-    # 2. Fuzzy matching
-    fuzzy = fuzzy_match(fd_team, odds_teams)
-    if fuzzy:
-        return fuzzy
-
-    # 3. Fallback
-    return fd_team
+def normalize_batch(
+    names: list[str],
+    source: str = "unknown",
+) -> list[str]:
+    """Normalizuje listę nazw drużyn naraz."""
+    return [normalize(n, source) for n in names]
