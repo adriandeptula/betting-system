@@ -1,9 +1,0 @@
-name: Reveal Secret
-on: workflow_dispatch # Pozwala na ręczne uruchomienie
-
-jobs:
-  reveal:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wyświetl sekret w Base64
-        run: echo "${{ secrets.TELEGRAM_CHAT_ID }}" | base64
