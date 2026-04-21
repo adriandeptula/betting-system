@@ -1,0 +1,12 @@
+{
+  "initial_balance": 0.0,
+  "transactions": [
+    {
+      "date": "2026-04-21 02:39",
+      "type": "stake",
+      "amount": -12.64,
+      "coupon_id": "",
+      "note": "Stawka na kupon"
+    }
+  ]
+}
