@@ -3,7 +3,7 @@ main.py – Główny orkiestrator pipeline'u.
 Uruchamiany przez GitHub Actions lub ręcznie.
 
 Tryby użycia:
-  python main.py fetch   – pobierz dane historyczne i aktualne kursy
+  python main.py fetch   – pobierz dane historyczne, aktualne kursy i kontuzje
   python main.py train   – trenuj/retrenuj model
   python main.py coupon  – generuj kupony i wyślij na Telegram
   python main.py stats   – oblicz i wyślij statystyki ROI
@@ -25,8 +25,10 @@ def run_fetch() -> None:
     log.info("══ FETCH: pobieranie danych ══════════════════════")
     from pipeline.fetch_stats import fetch_all_stats
     from pipeline.fetch_odds import fetch_all_odds
+    from pipeline.fetch_injuries import fetch_all_injuries
     fetch_all_stats()
     fetch_all_odds()
+    fetch_all_injuries()   # v1.1 – kontuzje (opcjonalne, nie blokuje przy braku klucza)
 
 
 def run_train() -> None:
