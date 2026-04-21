@@ -1,81 +1,124 @@
 """
-pipeline/fetch_stats.py
-Pobiera dane historyczne z football-data.co.uk (pliki CSV).
-Zapisuje połączone dane w data/raw/all_matches.csv
+pipeline/fetch_stats.py – Pobiera historyczne wyniki meczów z football-data.co.uk.
+
+Źródło: https://www.football-data.co.uk/data.php
+Format CSV: mecze z wynikami, kursami, statystykami strzałów itp.
+
+Pobierane kolumny (v1.1 – dodano HST/AST):
+  Date, HomeTeam, AwayTeam
+  FTHG, FTAG, FTR          – wynik końcowy (gole i rezultat H/D/A)
+  HS, AS                    – strzały ogółem (home/away shots)
+  HST, AST                  – strzały celne (home/away shots on target)  ← v1.1
+  B365H, B365D, B365A       – kursy Bet365 (podstawowe dla modelu)
+
+Zapisuje: data/raw/all_matches.csv
 """
 import io
 import logging
-from pathlib import Path
+import os
+from datetime import datetime
 
 import pandas as pd
 import requests
 
-from config import DATA_RAW, LEAGUES, SEASONS
+import config
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://www.football-data.co.uk/mmz4281/{season}/{code}.csv"
+# Kolumny które muszą wystąpić po pobraniu CSV (reszta jest opcjonalna)
+_REQUIRED_COLS = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 
-# Kolumny których potrzebujemy (nie wszystkie ligi mają wszystkie)
-WANTED_COLS = [
+# Kolumny do zachowania (jeśli istnieją w źródle)
+_KEEP_COLS = [
     "Date", "HomeTeam", "AwayTeam",
-    "FTHG", "FTAG", "FTR",    # Wyniki
-    "HS", "AS",                # Strzały
-    "HST", "AST",              # Strzały celne
-    "B365H", "B365D", "B365A", # Kursy Bet365 (do backtestów)
+    "FTHG", "FTAG", "FTR",
+    "HS",   "AS",
+    "HST",  "AST",            # v1.1 – strzały celne
+    "B365H", "B365D", "B365A",
 ]
 
+_FD_BASE = "https://www.football-data.co.uk/mmz4281"
 
-def download_season(league_code: str, fd_code: str, season: str) -> pd.DataFrame | None:
-    """Pobiera jeden sezon jednej ligi jako DataFrame."""
-    url = BASE_URL.format(season=season, code=fd_code)
+
+def _fetch_csv(fd_code: str, season: str) -> pd.DataFrame | None:
+    """Pobiera jeden CSV i zwraca DataFrame lub None przy błędzie."""
+    url = f"{_FD_BASE}/{season}/{fd_code}.csv"
     try:
-        resp = requests.get(url, timeout=20)
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
-        df = pd.read_csv(io.StringIO(resp.text), on_bad_lines="skip")
-
-        # Zachowaj tylko dostępne kolumny z WANTED_COLS
-        available = [c for c in WANTED_COLS if c in df.columns]
-        df = df[available].copy()
-        df["League"] = league_code
-        df["Season"] = season
-
-        # Usuń wiersze bez wyniku
-        df = df.dropna(subset=["FTR"])
-        df = df[df["FTR"].isin(["H", "D", "A"])]
-
-        log.info(f"✓ {league_code} {season}: {len(df)} meczów")
-        return df
-
-    except requests.HTTPError as e:
-        log.warning(f"✗ {league_code} {season}: HTTP {e.response.status_code}")
+    except requests.RequestException as exc:
+        log.warning(f"Nie udało się pobrać {url}: {exc}")
         return None
-    except Exception as e:
-        log.warning(f"✗ {league_code} {season}: {e}")
+
+    try:
+        # football-data.co.uk używa encodingu latin-1
+        df = pd.read_csv(
+            io.StringIO(resp.content.decode("latin-1")),
+            on_bad_lines="skip",
+        )
+    except Exception as exc:
+        log.warning(f"Błąd parsowania CSV {url}: {exc}")
         return None
+
+    # Sprawdź minimalne kolumny
+    missing = [c for c in _REQUIRED_COLS if c not in df.columns]
+    if missing:
+        log.warning(f"Brakuje kolumn {missing} w {url} – pomiń")
+        return None
+
+    # Zachowaj tylko potrzebne kolumny (które istnieją)
+    existing = [c for c in _KEEP_COLS if c in df.columns]
+    df = df[existing].copy()
+
+    # Filtruj wiersze z brakującym wynikiem
+    df = df.dropna(subset=["FTHG", "FTAG", "FTR"])
+    df = df[df["FTR"].isin(["H", "D", "A"])]
+
+    # Normalizuj datę do ISO (football-data używa DD/MM/YY lub DD/MM/YYYY)
+    df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+    df = df.dropna(subset=["Date"])
+
+    # Dodaj ligę i sezon
+    league_code = next(
+        (k for k, v in config.LEAGUES.items() if v["fd_code"] == fd_code),
+        fd_code,
+    )
+    df["league"] = league_code
+    df["season"] = season
+
+    log.info(f"  {league_code} {season}: {len(df)} meczów")
+    return df
 
 
 def fetch_all_stats() -> None:
-    """Pobiera wszystkie ligi i sezony, zapisuje do all_matches.csv."""
-    Path(DATA_RAW).mkdir(parents=True, exist_ok=True)
-    frames = []
+    """Pobiera wszystkie ligi i sezony, łączy i zapisuje all_matches.csv."""
+    frames: list[pd.DataFrame] = []
 
-    for league_code, info in LEAGUES.items():
-        for season in SEASONS:
-            df = download_season(league_code, info["fd_code"], season)
-            if df is not None:
+    for league_code, league_cfg in config.LEAGUES.items():
+        fd_code = league_cfg["fd_code"]
+        for season in config.SEASONS:
+            df = _fetch_csv(fd_code, season)
+            if df is not None and not df.empty:
                 frames.append(df)
 
     if not frames:
-        log.error("Nie pobrano żadnych danych!")
+        log.error("Nie pobrano żadnych danych! Sprawdź połączenie z internetem.")
         return
 
-    combined = pd.concat(frames, ignore_index=True)
-    out = f"{DATA_RAW}/all_matches.csv"
-    combined.to_csv(out, index=False)
-    log.info(f"Zapisano {len(combined)} meczów → {out}")
+    all_matches = pd.concat(frames, ignore_index=True)
+    all_matches = all_matches.sort_values("Date").reset_index(drop=True)
 
+    os.makedirs(config.DATA_RAW, exist_ok=True)
+    out_path = os.path.join(config.DATA_RAW, "all_matches.csv")
+    all_matches.to_csv(out_path, index=False)
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    fetch_all_stats()
+    # Raport o dostępności HST/AST
+    has_hst = all_matches["HST"].notna().sum() if "HST" in all_matches.columns else 0
+    has_ast = all_matches["AST"].notna().sum() if "AST" in all_matches.columns else 0
+    pct = has_hst / max(len(all_matches), 1) * 100
+
+    log.info(
+        f"✓ Zapisano {len(all_matches)} meczów → {out_path}\n"
+        f"  Strzały celne (HST/AST): {has_hst}/{len(all_matches)} wierszy "
+        f"({pct:.0f}% pokrycie)"
+    )
