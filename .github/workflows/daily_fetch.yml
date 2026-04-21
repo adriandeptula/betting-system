@@ -4,7 +4,6 @@ on:
   schedule:
     # Codziennie o 6:00 UTC (7:00 CET / 8:00 CEST)
     - cron: '0 6 * * *'
-  # Ręczny trigger – przydatny do testów i napraw
   workflow_dispatch:
 
 jobs:
@@ -30,14 +29,16 @@ jobs:
 
       - name: Fetch data and odds
         env:
-          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2:     ${{ secrets.ODDS_API_KEY_2 }}
+          API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
+          API_FOOTBALL_KEY_2: ${{ secrets.API_FOOTBALL_KEY_2 }}
         run: python main.py fetch
 
       - name: Commit updated data
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/raw/ data/odds/
+          git add data/raw/ data/odds/ data/injuries/
           git diff --staged --quiet || git commit -m "data: update $(date +'%Y-%m-%d')"
           git push
