@@ -5,6 +5,21 @@ Dzięki temu Claude będzie znał pełny kontekst aplikacji bez potrzeby tłumac
 
 ---
 
+## Aktualna wersja: v1.1 ✅
+
+**Co nowego w v1.1 (zaimplementowane):**
+- Integracja API-Football: kontuzje i zawieszenia jako cecha modelu
+- Nowe cechy modelu: strzały celne HST (home shots on target) i AST
+- Podwójne klucze API z automatycznym fallbackiem dla The Odds API i API-Football
+- Fuzzy matching w name_mapping.py przy użyciu rapidfuzz
+- Nowy plik: `pipeline/api_utils.py` (centralny mechanizm dual-key)
+- Nowy plik: `pipeline/fetch_injuries.py` (pobieranie kontuzji)
+- Nowy katalog danych: `data/injuries/`
+
+**Następna wersja: v1.2** (hyperparameter tuning, ensemble, forma ważona, Elo)
+
+---
+
 ## Czym jest ten projekt
 
 Automatyczny system value bettingu oparty na modelu ML (XGBoost + kalibracja Platta).
@@ -25,27 +40,42 @@ betting_system/
 │                                  Tryby: fetch | train | coupon | stats | bot | full
 │
 ├── config.py                   ← WSZYSTKIE parametry. Zmieniaj tylko tutaj.
-│                                  Ligi, API keys (z env), progi modelu, Kelly, kursy.
+│                                  Ligi (z apifootball_id), klucze API (listy z env),
+│                                  progi modelu, Kelly, kursy.
 │
-├── requirements.txt            ← pandas, numpy, scikit-learn, xgboost, requests, pytz
+├── requirements.txt            ← pandas, numpy, scikit-learn, xgboost, requests,
+│                                  pytz, rapidfuzz
 │
 ├── pipeline/
+│   ├── api_utils.py            ← [v1.1 NOWY] Mechanizm dual-key API.
+│   │                              Funkcja api_get() próbuje kolejno każdy klucz.
+│   │                              Przy HTTP 401/402/429 przełącza na następny.
 │   ├── fetch_stats.py          ← Pobiera CSV z football-data.co.uk (5 lig, 4 sezony)
+│   │                              Zachowuje HST/AST (strzały celne) [v1.1]
 │   │                              Zapisuje: data/raw/all_matches.csv
 │   ├── fetch_odds.py           ← Pobiera JSON z The Odds API (aktualne kursy)
+│   │                              Używa api_utils.api_get() z dual-key fallback [v1.1]
 │   │                              Zapisuje: data/odds/odds_YYYY-MM-DD.json
+│   ├── fetch_injuries.py       ← [v1.1 NOWY] Pobiera kontuzje z API-Football
+│   │                              Używa api_utils.api_get() z dual-key fallback
+│   │                              Opcjonalne: bez klucza po prostu pomija (no-op)
+│   │                              Zapisuje: data/injuries/injuries_YYYY-MM-DD.json
 │   └── name_mapping.py         ← Słownik mapowań nazw drużyn między źródłami.
+│                                  [v1.1] fuzzy matching z rapidfuzz jako fallback.
 │                                  Gdy pojawi się "brak mapowania" w logach – dodaj tu.
 │
 ├── model/
 │   ├── features.py             ← Feature engineering (walk-forward, bez data leakage)
-│   │                              Cechy: forma 5 meczów, H2H, uczciwe prob. rynkowe
+│   │                              [v1.1] Nowe cechy: home/away_hst_avg, home/away_ast_avg
+│   │                              [v1.1] Nowe cechy: home/away_injury_score
 │   │                              FUNKCJA: remove_margin() usuwa marżę bukmachera
+│   │                              STAŁE: FEATURE_COLS – lista w ustalonej kolejności
 │   ├── train.py                ← XGBoost multiclass (H/D/A) + CalibratedClassifierCV
 │   │                              Walk-forward split 85/15. Brier Score jako metryka.
 │   │                              Symulacja ROI na danych testowych przy każdym treningu.
 │   │                              Zapisuje: data/model/model.pkl
 │   ├── predict.py              ← Wczytuje model, generuje predykcje dla nadchodzących meczów
+│   │                              Wczytuje też injuries przez fetch_injuries.load_latest_injuries()
 │   └── evaluate.py             ← Oblicza ROI z historii kuponów, aktualizuje stats.json
 │
 ├── coupon/
@@ -69,6 +99,8 @@ betting_system/
 ├── data/
 │   ├── raw/all_matches.csv     ← Historyczne mecze (generowane przez fetch)
 │   ├── odds/odds_*.json        ← Kursy z danego dnia
+│   ├── injuries/               ← [v1.1 NOWY] Kontuzje z API-Football
+│   │   └── injuries_*.json     ← {league_code: [{player_name, team_name, reason, ...}]}
 │   ├── results/
 │   │   ├── coupons_history.json ← Historia kuponów (date, type, legs, stake, result)
 │   │   ├── finance.json         ← Historia transakcji finansowych
@@ -89,14 +121,15 @@ betting_system/
 
 ```
 KROK 1 - DANE (daily_fetch, codziennie)
-  football-data.co.uk → CSV → data/raw/all_matches.csv
+  football-data.co.uk → CSV → data/raw/all_matches.csv  (z HST/AST v1.1)
   The Odds API        → JSON → data/odds/odds_YYYY-MM-DD.json
+  API-Football        → JSON → data/injuries/injuries_YYYY-MM-DD.json  [v1.1, opcjonalne]
 
 KROK 2 - MODEL (weekly_retrain, poniedziałek)
-  all_matches.csv → features.py (walk-forward) → XGBoost + kalibracja → model.pkl
+  all_matches.csv + injuries/*.json → features.py (walk-forward) → XGBoost → model.pkl
 
 KROK 3 - KUPONY (coupon_gen, środa + piątek)
-  model.pkl + odds_*.json → predict.py → value_engine.py → builder.py → Telegram
+  model.pkl + odds_*.json + injuries_*.json → predict.py → value_engine.py → builder.py → Telegram
   Po wysłaniu: bot pyta "Ile wpłaciłeś?" → czeka na /stake X
 
 KROK 4 - BOT (bot_polling, co godzinę)
@@ -104,12 +137,30 @@ KROK 4 - BOT (bot_polling, co godzinę)
 
 KROK 5 - STATYSTYKI (weekly_retrain, poniedziałek)
   coupons_history.json + finance.json → evaluate.py → stats.json → Telegram
-  Bot pyta o wyniki poprzednich kuponów → /won X lub /lost
 ```
 
 ---
 
 ## Kluczowe decyzje projektowe
+
+### Dual-key API (v1.1)
+Każde API ma 2 klucze w GitHub Secrets (np. ODDS_API_KEY + ODDS_API_KEY_2).
+Mechanizm w pipeline/api_utils.py:
+- Próbuje klucz #1
+- Przy HTTP 401/402/429 (limit wyczerpany) przełącza na klucz #2
+- Klucze trzymane jako lista w config.py: ODDS_API_KEYS = [key1, key2]
+- Jeśli brak klucza #2, działa na jednym (brak błędu)
+
+### API-Football jest opcjonalne
+fetch_injuries.py przy braku klucza zwraca {} bez błędu.
+features.py przy braku danych o kontuzjach ustawia injury_score = 0.0.
+System działa normalnie bez tej funkcji – kontuzje to dodatkowe ulepszenie.
+
+### Fuzzy matching w name_mapping (v1.1)
+rapidfuzz jako fallback przy braku ręcznego mapowania.
+Threshold: 80 punktów (token_sort_ratio).
+Fuzzy cache zapobiega wielokrotnemu przeliczaniu.
+Zawsze lepiej dodać ręczne mapowanie do TEAM_MAP niż polegać na fuzzy.
 
 ### Multiclass zamiast binary
 Piłka nożna ma 3 wyniki (H/D/A). Model binarny byłby błędny.
@@ -141,11 +192,13 @@ Opóźnienie: max 60 minut. Wystarczające dla zakładów sportowych.
 ## Zmienne środowiskowe (GitHub Secrets)
 
 ```
-ODDS_API_KEY      - klucz The Odds API (the-odds-api.com)    [WYMAGANY]
-TELEGRAM_TOKEN    - token bota (@BotFather na Telegramie)     [WYMAGANY]
-TELEGRAM_CHAT_ID  - Twój chat ID (@userinfobot na Telegramie) [WYMAGANY]
-BANKROLL          - bankroll w PLN, np. "1000"                [opcjonalny]
-API_FOOTBALL_KEY  - na przyszłość (v1.1)                      [opcjonalny]
+ODDS_API_KEY       - klucz #1 The Odds API (the-odds-api.com)  [WYMAGANY]
+ODDS_API_KEY_2     - klucz #2 The Odds API (drugie konto)      [ZALECANY – fallback]
+TELEGRAM_TOKEN     - token bota (@BotFather na Telegramie)     [WYMAGANY]
+TELEGRAM_CHAT_ID   - Twój chat ID (@userinfobot na Telegramie) [WYMAGANY]
+BANKROLL           - bankroll w PLN, np. "1000"                 [WYMAGANY]
+API_FOOTBALL_KEY   - klucz #1 API-Football (v1.1, opcjonalny)  [OPCJONALNY]
+API_FOOTBALL_KEY_2 - klucz #2 API-Football (drugie konto)      [OPCJONALNY – fallback]
 ```
 
 ---
@@ -198,18 +251,19 @@ Wzór całościowego wyniku:
 | MAX_ODDS | 3.20 | Max kurs. Powyżej = zbyt niepewne. |
 | FORM_WINDOW | 5 | Ile ostatnich meczów do liczenia formy. |
 | MAX_LEGS | 3 | Max nogi w parlayach. Nie zwiększaj powyżej 3. |
+| CURRENT_SEASON | 2024 | Rok sezonu dla API-Football. Aktualizuj co rok. |
 
 ---
 
 ## Ligi i źródła danych
 
-| Kod | Liga | football-data | Odds API |
-|-----|------|---------------|----------|
-| EPL | Premier League | E0 | soccer_epl |
-| BL | Bundesliga | D1 | soccer_germany_bundesliga |
-| LL | La Liga | SP1 | soccer_spain_la_liga |
-| SA | Serie A | I1 | soccer_italy_serie_a |
-| EK | Ekstraklasa | P1 | soccer_poland_ekstraklasa |
+| Kod | Liga | football-data | Odds API | API-Football ID |
+|-----|------|---------------|----------|-----------------|
+| EPL | Premier League | E0 | soccer_epl | 39 |
+| BL | Bundesliga | D1 | soccer_germany_bundesliga | 78 |
+| LL | La Liga | SP1 | soccer_spain_la_liga | 140 |
+| SA | Serie A | I1 | soccer_italy_serie_a | 135 |
+| EK | Ekstraklasa | P1 | soccer_poland_ekstraklasa | 106 |
 
 Sezony: 2021/22, 2022/23, 2023/24, 2024/25
 
@@ -219,13 +273,16 @@ Sezony: 2021/22, 2022/23, 2023/24, 2024/25
 
 | Błąd w logach | Przyczyna | Rozwiązanie |
 |---------------|-----------|-------------|
-| Brak ODDS_API_KEY | Secret nie ustawiony | GitHub → Settings → Secrets |
+| Brak kluczy API | Secret nie ustawiony | GitHub → Settings → Secrets |
+| Wszystkie klucze wyczerpane | Oba konta osiągnęły limit | Poczekaj do resetu (1 dzień/miesiąc) |
 | Za mało danych < 200 | Pierwsze uruchomienie | python main.py fetch, potem train |
 | Liga X niedostępna | Przerwa sezonowa | Normalny stan |
 | Brak value betów | Model zbyt konserwatywny | Obniż MIN_EDGE do 0.04 |
 | model.pkl not found | Nie wytrenowany | python main.py train |
-| Brak mapowania: X | Nowa drużyna w lidze | Dodaj do name_mapping.py |
+| Brak mapowania: X | Nowa drużyna w lidze | Dodaj do name_mapping.py → TEAM_MAP |
 | Bot nie odpowiada | Zły token lub chat ID | Sprawdź Secrets, /start do bota |
+| API-Football errors | Limit dzienny 100 req | Poczekaj do północy lub użyj klucza #2 |
+| rapidfuzz not found | Nie zainstalowany | pip install rapidfuzz==3.9.3 |
 
 ---
 
@@ -237,8 +294,7 @@ Model ocenia mecze probabilistycznie na podstawie historycznych statystyk.
 Wyniki historyczne są pobierane automatycznie przez fetch_stats.py
 z football-data.co.uk z opóźnieniem 1-2 dni.
 
-Wyniki finansowe kuponów wpisujesz przez Telegram komendami /won lub /lost
-(bot pyta o to automatycznie w poniedziałkowym podsumowaniu).
+Wyniki finansowe kuponów wpisujesz przez Telegram komendami /won lub /lost.
 
 ---
 
@@ -258,16 +314,23 @@ System WYMAGA KOREKTY jeśli:
 
 ## Plan rozwoju
 
-### v1.1 (następna wersja)
-- Dane o kontuzjach z API-Football (free: 100 req/dzień)
-- Round-robin kupony (z 4 value betów kombinacje 2-nożne)
-- Automatyczne rozliczanie wyników przez API scores
+### v1.1 (obecna) ✅
+- Dane o kontuzjach z API-Football (100 req/dzień/konto)
+- Cechy HST/AST (strzały celne)
+- Dual-key z automatycznym fallbackiem dla wszystkich API
+- Fuzzy matching w name_mapping.py
 
-### v1.2
+### v1.2 (następna)
 - Hyperparameter tuning (Optuna)
 - Ensemble XGBoost + LightGBM
 - Feature: forma ważona wagą czasową
+- Feature: Elo rating drużyn
 - Closing Line Value tracking
+
+### v1.3
+- Round-robin kupony (z 4 value betów kombinacje 2-nożne)
+- Filtry korelacji przy budowaniu parlayów
+- Automatyczne rozliczanie wyników przez API scores
 
 ### v2.0
 - Tenis ATP/WTA (dane: Jeff Sackmann GitHub, darmowe)
@@ -285,7 +348,6 @@ System WYMAGA KOREKTY jeśli:
 - Automatyczne stawianie zakładów (nielegalne bez licencji)
 - Live/in-play betting (wymaga WebSocket + płatne API)
 - Arbitraż (inna strategia)
-- Dane o kontuzjach (planowane v1.1)
 - Prognozowanie remisów osobno (planowane v1.2)
 
 ---
@@ -297,5 +359,7 @@ System WYMAGA KOREKTY jeśli:
 3. Czy data/raw/all_matches.csv istnieje? Jeśli nie: uruchom fetch
 4. Czy data/model/model.pkl istnieje? Jeśli nie: uruchom train
 5. Czy data/odds/odds_YYYY-MM-DD.json z dzisiaj istnieje? Jeśli nie: uruchom fetch
-6. GitHub Secrets → czy wszystkie 4 wymagane są ustawione?
+6. GitHub Secrets → czy ODDS_API_KEY i TELEGRAM_* są ustawione?
 7. Telegram → napisz /start do bota (aktywacja)
+8. [v1.1] Czy data/injuries/ istnieje? Jeśli nie i masz API-Football key – uruchom fetch
+9. [v1.1] Logi "Wszystkie klucze wyczerpane"? → sprawdź limity obu kont API
