@@ -1,4 +1,4 @@
-# 🤖 AI Betting System
+# 🤖 AI Betting System – v1.1
 
 System automatyczny do generowania value betów oparty na XGBoost + kalibracji Platta.
 Działa w 100% na GitHub Actions. Koszt: **0 zł/miesiąc**.
@@ -21,7 +21,7 @@ Działa w 100% na GitHub Actions. Koszt: **0 zł/miesiąc**.
 Co tydzień automatycznie:
 
 PON  05:00 → Pobierz świeże dane → Retrenuj model → Wyślij statystyki ROI
-CZW  06:00 → Pobierz dane
+CZW  06:00 → Pobierz dane (wyniki + kursy + kontuzje)
 PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STAWIAĆ
 ŚR   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STAWIAĆ
 ```
@@ -29,23 +29,30 @@ PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STA
 **Źródła danych:**
 - football-data.co.uk – historyczne wyniki 5 lig (EPL, Bundesliga, La Liga, Serie A, Ekstraklasa)
 - The Odds API – aktualne kursy z ~40 bukmacherów europejskich
+- API-Football *(v1.1, opcjonalne)* – kontuzje i zawieszenia graczy
 
 **Model:** XGBoost z kalibracją Platta (3 klasy: H/D/A)
 
+**Nowe cechy v1.1:** strzały celne (HST/AST), wskaźnik kontuzji drużyny
+
 **Stawki:** Frakcjonalne kryterium Kelly (25% pełnego Kelly)
+
+**Klucze API:** każde API obsługuje 2 klucze z automatycznym przełączaniem gdy limit wyczerpany
 
 ---
 
 ## Krok po kroku: pierwsze uruchomienie
 
-### KROK 1: Stwórz konto na The Odds API
+### KROK 1: Stwórz konto(a) na The Odds API
 
 1. Wejdź na **https://the-odds-api.com**
 2. Kliknij **Get API Key** → zarejestruj się
-3. Skopiuj klucz API (długi ciąg znaków)
-4. **Zachowaj** – będzie potrzebny w Kroku 4
+3. Skopiuj klucz API
+4. **Opcjonalnie:** załóż drugie konto (inny email) i skopiuj drugi klucz
 
-> Free tier: 500 requestów/miesiąc. System używa ~60-90/miesiąc. Wystarczy w zupełności.
+> Free tier: 500 requestów/miesiąc na konto. System używa ~60-90/miesiąc.
+> Z 2 kontami masz 1000 req/miesiąc – pełna redundancja.
+> Gdy pierwszy klucz się wyczerpie, system **automatycznie** przełączy się na drugi.
 
 ---
 
@@ -68,97 +75,97 @@ PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STA
 **2c. Aktywuj bota:**
 1. Wyszukaj swojego nowego bota po username
 2. Napisz `/start`
-3. Od teraz bot może Ci wysyłać wiadomości
 
 ---
 
-### KROK 3: Utwórz prywatne repozytorium GitHub
+### KROK 3: *(Opcjonalne)* Stwórz konto(a) na API-Football
+
+Kontuzje to opcjonalna funkcja v1.1. Bez tego klucza system działa normalnie,
+tylko model nie uwzględnia niedostępnych graczy.
+
+1. Wejdź na **https://www.api-football.com** (hostowane przez RapidAPI)
+2. Kliknij **Subscribe** → wybierz plan **Free** (100 req/dzień)
+3. Skopiuj klucz z zakładki **Security** → `X-RapidAPI-Key`
+4. **Opcjonalnie:** zarejestruj drugie konto i skopiuj drugi klucz
+
+> Free tier: 100 requestów/dzień. System używa ~10/dzień (1 req/liga).
+> Z 2 kontami masz 200 req/dzień – pełna redundancja.
+
+---
+
+### KROK 4: Utwórz prywatne repozytorium GitHub
 
 1. Zaloguj się na **https://github.com**
 2. Kliknij **+** → **New repository**
 3. Nazwa: `betting-system` (lub dowolna)
-4. Ustaw **Private** (ważne! repo musi być prywatne)
+4. Ustaw **Private** (ważne!)
 5. **NIE** zaznaczaj "Initialize repository"
 6. Kliknij **Create repository**
 
 ---
 
-### KROK 4: Wgraj kod do repozytorium
-
-Otwórz terminal na swoim komputerze:
+### KROK 5: Wgraj kod do repozytorium
 
 ```bash
-# Klonuj puste repo
 git clone https://github.com/TWOJA_NAZWA/betting-system.git
 cd betting-system
-
-# Wgraj wszystkie pliki projektu do tego katalogu
-# (skopiuj zawartość betting_system/ tutaj)
-
-# Pierwsza wersja commitów
+# Skopiuj wszystkie pliki projektu tutaj
 git add .
-git commit -m "feat: initial system setup"
+git commit -m "feat: v1.1 initial setup"
 git push origin main
 ```
 
 ---
 
-### KROK 5: Ustaw GitHub Secrets (klucze API)
+### KROK 6: Ustaw GitHub Secrets (klucze API)
 
-1. Wejdź na stronę swojego repo na GitHub
-2. Kliknij **Settings** (górny pasek)
-3. W lewym menu: **Secrets and variables** → **Actions**
-4. Kliknij **New repository secret** dla każdego poniżej:
+1. Wejdź na stronę repo → **Settings** → **Secrets and variables** → **Actions**
+2. Kliknij **New repository secret** dla każdego poniżej:
 
-| Nazwa | Wartość |
-|-------|---------|
-| `ODDS_API_KEY` | klucz z Kroku 1 |
-| `TELEGRAM_TOKEN` | token z Kroku 2a |
-| `TELEGRAM_CHAT_ID` | ID z Kroku 2b |
-| `BANKROLL` | Twój bankroll w PLN, np. `1000` |
+| Nazwa | Wartość | Wymagany |
+|-------|---------|---------|
+| `ODDS_API_KEY` | klucz #1 z The Odds API | ✅ Tak |
+| `ODDS_API_KEY_2` | klucz #2 (drugie konto) | ⚡ Zalecany |
+| `TELEGRAM_TOKEN` | token bota Telegram | ✅ Tak |
+| `TELEGRAM_CHAT_ID` | Twój chat ID | ✅ Tak |
+| `BANKROLL` | Twój bankroll w PLN, np. `1000` | ✅ Tak |
+| `API_FOOTBALL_KEY` | klucz #1 z API-Football | ☑️ Opcjonalny |
+| `API_FOOTBALL_KEY_2` | klucz #2 (drugie konto) | ☑️ Opcjonalny |
 
-> ⚠️ Nigdy nie wpisuj kluczy bezpośrednio w kod!
+> ⚠️ Nigdy nie wpisuj kluczy bezpośrednio w kod! Tylko przez Secrets.
+
+**Jak działa fallback kluczy:**
+System próbuje klucz #1. Jeśli odpowiedź to HTTP 429/401/402 (limit wyczerpany),
+automatycznie przełącza się na klucz #2. Żaden kupon nie zostanie pominięty.
 
 ---
 
-### KROK 6: Pierwsze uruchomienie – pobierz dane i wytrenuj model
+### KROK 7: Pierwsze uruchomienie
 
-GitHub Actions nie uruchomi się automatycznie na początku.
-Musisz ręcznie uruchomić pipeline pierwszy raz:
-
-**6a. Pobierz dane historyczne:**
+**7a. Pobierz dane historyczne:**
 1. W repo: zakładka **Actions**
 2. Wybierz workflow **"Daily Data Fetch"**
 3. Kliknij **"Run workflow"** → **"Run workflow"**
-4. Poczekaj ~3-5 minut na zakończenie (zielony checkmark)
+4. Poczekaj ~3-5 minut
 
-**6b. Wytrenuj model:**
-1. W repo: zakładka **Actions**
-2. Wybierz workflow **"Weekly Retrain"**
-3. Kliknij **"Run workflow"** → **"Run workflow"**
-4. Poczekaj ~5-10 minut
+**7b. Wytrenuj model:**
+1. Wybierz workflow **"Weekly Retrain"**
+2. Kliknij **"Run workflow"**
+3. Poczekaj ~5-10 minut
 
-> Po sukcesie model.pkl pojawi się w `data/model/` w repo.
-
----
-
-### KROK 7: Pierwsze kupony
-
-1. W repo: zakładka **Actions**
-2. Wybierz workflow **"Generate Coupons"**
-3. Kliknij **"Run workflow"** → **"Run workflow"**
-4. Po ~2 minutach sprawdź Telegram!
-
-Jeśli dostałeś wiadomości na Telegram – **system działa**. 🎉
+**7c. Pierwsze kupony:**
+1. Wybierz workflow **"Generate Coupons"**
+2. Kliknij **"Run workflow"**
+3. Po ~2 minutach sprawdź Telegram!
 
 ---
 
-### KROK 8: Weryfikacja systemu
+### KROK 8: Weryfikacja
 
 Sprawdź w logach Actions czy:
 - ✅ Dane pobrane (X meczów historycznych)
+- ✅ Kontuzje pobrane (lub pominięte gdy brak klucza API-Football)
 - ✅ Model wytrenowany (accuracy > baseline)
-- ✅ ROI symulacji > 0%
 - ✅ Value bety znalezione
 - ✅ Kupony wysłane na Telegram
 
@@ -170,7 +177,7 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 
 | Dzień | Godzina (UTC) | Akcja |
 |-------|---------------|-------|
-| Pon–Niedz | 06:00 | Pobierz dane + aktualne kursy |
+| Pon–Niedz | 06:00 | Pobierz dane + kursy + kontuzje |
 | Poniedziałek | 05:00 | Retrenuj model + wyślij statystyki ROI |
 | Środa | 09:00 | Generuj kupony (mecze środkotygodniowe) |
 | Piątek | 09:00 | Generuj kupony (mecze weekendowe) |
@@ -206,26 +213,14 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 
 ## Plan Rozwoju
 
-### v1.0 – Obecna wersja ✅
-- 5 lig piłkarskich (EPL, Bundesliga, La Liga, Serie A, Ekstraklasa)
-- Model XGBoost + kalibracja Platta
-- Value engine z filtrem edge/odds
-- Kupony: singiel / podwójny / potrójny
-- Stawki Kelly (frakcjonalne)
-- Wysyłka na Telegram
-- GitHub Actions (całkowicie darmowe)
+### v1.0 ✅ (poprzednia)
+- 5 lig piłkarskich, XGBoost + Platt, value engine, kupony, Kelly, Telegram, GitHub Actions
 
----
-
-### v1.1 – Poprawa jakości danych
-**Priorytet: wysoki | Szacowany czas: 1-2 tygodnie**
-
-- [ ] Integracja API-Football (kontuzje, składy, linia)
-  - Klucz: darmowy tier = 100 req/dzień
-  - Wpływ: model zyska 2-5% dokładności na meczach z kontuzjami gwiazd
-- [ ] Rozszerzenie name_mapping.py o automatyczne fuzzy matching z logowaniem
-- [ ] Dodanie strzałów na bramkę (HST/AST) jako feature
-- [ ] Obsługa brakujących kursów remisu (fallback 3.50)
+### v1.1 ✅ (obecna)
+- ✅ Integracja API-Football (kontuzje i zawieszenia)
+- ✅ Nowe cechy modelu: strzały celne (HST/AST)
+- ✅ Podwójne klucze API z automatycznym fallbackiem (The Odds API + API-Football)
+- ✅ Fuzzy matching w name_mapping.py (rapidfuzz)
 
 ---
 
@@ -236,7 +231,7 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 - [ ] Ensemble: XGBoost + LightGBM + uśrednianie
 - [ ] Feature: forma ważona (ostatnie mecze ważniejsze niż dawne)
 - [ ] Feature: dysproporcja sił (ranking Elo drużyn)
-- [ ] Osobny mini-model dla remisów (trudne, ale wartościowe)
+- [ ] Osobny mini-model dla remisów
 - [ ] Calibration plot – wizualizacja jakości kalibracji
 
 ---
@@ -254,37 +249,28 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 ### v2.0 – Nowe sporty
 **Priorytet: niski | Szacowany czas: 4-6 tygodni**
 
-- [ ] **Tenis ATP/WTA**
-  - Dane: Jeff Sackmann (GitHub, darmowe)
-  - Cechy: ranking, forma na nawierzchni, H2H
-  - Setki meczów tygodniowo = dużo okazji
-- [ ] **NBA / Koszykówka**
-  - Dane: basketball-reference.com
-  - Cechy: pace, eFG%, rest days, back-to-back
-- [ ] **Siatkówka PlusLiga**
-  - Dane: volleyball.pl (scraping)
-  - Polskie ligi = potencjalnie linia bukmacherów słabsza
+- [ ] Tenis ATP/WTA (dane: Jeff Sackmann GitHub, darmowe)
+- [ ] NBA / Koszykówka (dane: basketball-reference.com)
+- [ ] Siatkówka PlusLiga (dane: volleyball.pl)
 
 ---
 
 ### v2.1 – Monitoring i UX
 **Priorytet: niski | Szacowany czas: 1-2 tygodnie**
 
-- [ ] Dashboard webowy (prosty HTML w GitHub Pages)
-  - Wykres ROI w czasie
-  - Historia kuponów
-  - Aktualne statystyki
+- [ ] Dashboard webowy (prosty HTML w GitHub Pages): wykres ROI, historia kuponów
 - [ ] Powiadomienie gdy model traci edge (degradacja)
 - [ ] Tygodniowy raport PDF wysyłany na email
-- [ ] Komenda Telegram: `/stats` → natychmiastowe statystyki
+- [ ] Komenda Telegram: `/stats` → natychmiastowe statystyki (już jest, ale bez historii graficznej)
 
 ---
 
-### v3.0 – Zaawansowane strategie
-**Priorytet: bardzo niski | Szacowany czas: 2-3 miesiące**
+## Ważne zastrzeżenia prawne
 
-- [ ] Porównanie kursów między bukmacherami (line shopping)
-  - Wymaga: OddsPapi API lub scraping STS/forBET
-- [ ] Detekcja arbitrażu (arb między bukmacherami)
-- [ ] Model sieci neuronowej (LSTM na sekwencjach meczów)
-- [ ] Live betting sygnały (wymaga płatnego API z WebSocket)
+System generuje sugestie zakładów wyłącznie na potrzeby własne właściciela.
+Nie jest to usługa doradztwa finansowego ani bukmacherska.
+Stawiaj wyłącznie w legalnych, licencjonowanych serwisach.
+W Polsce legalni bukmacherzy posiadają licencję Ministra Finansów.
+
+Hazard może uzależniać. Graj odpowiedzialnie.
+Pomoc: **www.uzaleznienia.info** | Infolinia: **801 889 880**
