@@ -29,17 +29,23 @@ jobs:
 
       - name: Fetch fresh data
         env:
-          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2:     ${{ secrets.ODDS_API_KEY_2 }}
+          API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
+          API_FOOTBALL_KEY_2: ${{ secrets.API_FOOTBALL_KEY_2 }}
         run: python main.py fetch
 
       - name: Retrain model
+        env:
+          API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
+          API_FOOTBALL_KEY_2: ${{ secrets.API_FOOTBALL_KEY_2 }}
         run: python main.py train
 
       - name: Send weekly stats
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BANKROLL:         ${{ secrets.BANKROLL }}
         run: python main.py stats
 
       - name: Commit updated model and data
