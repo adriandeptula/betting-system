@@ -333,14 +333,17 @@ def compute_features_upcoming(
         injuries = {}
 
     history_df = history_df.copy()
-    history_df["Date"] = pd.to_datetime(history_df["Date"])
+    # history_df["Date"] musi być timezone-naive (dane z CSV nie mają strefy)
+    history_df["Date"] = pd.to_datetime(history_df["Date"]).dt.tz_localize(None)
 
     rows: list[dict[str, Any]] = []
 
     for match in upcoming:
         home   = str(match["home_team"])
         away   = str(match["away_team"])
-        date   = pd.Timestamp(match["date"])
+        # Zdejmij strefę czasową jeśli istnieje – daty z The Odds API mają UTC (+00:00)
+        raw_date = pd.Timestamp(match["date"])
+        date = raw_date.tz_localize(None) if raw_date.tzinfo is None else raw_date.tz_convert("UTC").tz_localize(None)
         league = str(match.get("league", ""))
 
         odds_h = float(match.get("odds_h", 2.0))
