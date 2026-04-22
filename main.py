@@ -67,7 +67,7 @@ def run_coupon() -> None:
 
 def run_stats() -> None:
     log.info("══ STATS: obliczanie ROI ═════════════════════════")
-    from model.evaluate import update_coupon_results
+    from model.evaluate import update_coupon_results, get_pending_summary
     from notify.telegram import send_stats, _send
     from notify.finance import get_summary, format_summary_message
 
@@ -76,7 +76,8 @@ def run_stats() -> None:
 
     s = get_summary()
     if s["total_coupons"] > 0 or s["initial_balance"] != 0:
-        _send(format_summary_message(s))
+        pending = get_pending_summary()
+        _send(format_summary_message(s, pending))
 
     _send(
         "🎯 <b>Czas rozliczenia!</b>\n\n"
