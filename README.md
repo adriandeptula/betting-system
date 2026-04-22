@@ -90,10 +90,16 @@ CO H 00:00 → Bot sprawdza komendy Telegram i odpowiada
 Kontuzje to opcjonalna funkcja. Bez tego klucza system działa normalnie,
 tylko model nie uwzględnia niedostępnych graczy.
 
-1. Wejdź na **https://www.api-football.com** (hostowane przez RapidAPI)
-2. Kliknij **Subscribe** → wybierz plan **Free** (100 req/dzień)
-3. Skopiuj klucz z zakładki **Security** → `X-RapidAPI-Key`
-4. **Zalecane:** zarejestruj drugie i trzecie konto i skopiuj klucze
+**Rejestracja bezpośrednia na api-sports.io (zalecana):**
+
+1. Wejdź na **https://dashboard.api-football.com** (api-sports.io – bezpośrednio, nie przez RapidAPI)
+2. Kliknij **Register** → zarejestruj się
+3. Po zalogowaniu wejdź w **My Account** → skopiuj wartość pola **API Key**
+4. **Zalecane:** zarejestruj drugie i trzecie konto (różne emaile) i skopiuj klucze
+
+> ⚠️ **Nie rejestruj się przez RapidAPI** – system używa nagłówka `x-apisports-key`
+> charakterystycznego dla bezpośredniej rejestracji. Klucze z RapidAPI (`X-RapidAPI-Key`)
+> wymagałyby zmiany w kodzie (`fetch_injuries.py`).
 
 > Free tier: 100 requestów/dzień na konto. System używa ~5 req/dzień (1 req/liga).
 > Z 3 kontami masz **300 req/dzień** — wystarczy na dalszą rozbudowę o kolejne ligi.
