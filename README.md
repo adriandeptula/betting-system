@@ -10,8 +10,9 @@ Działa w 100% na GitHub Actions. Koszt: **0 zł/miesiąc**.
 1. [Jak to działa](#jak-to-działa)
 2. [Krok po kroku: pierwsze uruchomienie](#krok-po-kroku-pierwsze-uruchomienie)
 3. [Harmonogram działania](#harmonogram-działania)
-4. [Zarządzanie bankrollem](#zarządzanie-bankrollem)
-5. [Plan rozwoju](#plan-rozwoju)
+4. [Śledzenie finansów i kupony Telegram](#śledzenie-finansów-i-kupony-telegram)
+5. [Zarządzanie bankrollem](#zarządzanie-bankrollem)
+6. [Plan rozwoju](#plan-rozwoju)
 
 ---
 
@@ -21,19 +22,20 @@ Działa w 100% na GitHub Actions. Koszt: **0 zł/miesiąc**.
 Co tydzień automatycznie:
 
 PON  05:00 → Pobierz świeże dane → Retrenuj model → Wyślij statystyki ROI
-CZW  06:00 → Pobierz dane (wyniki + kursy + kontuzje)
-PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STAWIAĆ
+COD  06:00 → Pobierz dane (wyniki + kursy + kontuzje)
 ŚR   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STAWIAĆ
+PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STAWIAĆ
+CO H 00:00 → Bot sprawdza komendy Telegram i odpowiada
 ```
 
 **Źródła danych:**
 - football-data.co.uk – historyczne wyniki 5 lig (EPL, Bundesliga, La Liga, Serie A, Ekstraklasa)
 - The Odds API – aktualne kursy z ~40 bukmacherów europejskich
-- API-Football *(v1.1, opcjonalne)* – kontuzje i zawieszenia graczy
+- API-Football *(opcjonalne)* – kontuzje i zawieszenia graczy
 
 **Model:** XGBoost z kalibracją Platta (3 klasy: H/D/A)
 
-**Nowe cechy v1.1:** strzały celne (HST/AST), wskaźnik kontuzji drużyny
+**Cechy modelu:** forma (pkt/gole/strzały celne), H2H, kursy rynkowe (fair prob), wskaźnik kontuzji drużyny
 
 **Stawki:** Frakcjonalne kryterium Kelly (25% pełnego Kelly)
 
@@ -80,7 +82,7 @@ PT   09:00 → Generuj kupony → Wyślij na Telegram  ← TY DECYDUJESZ CZY STA
 
 ### KROK 3: *(Opcjonalne)* Stwórz konto(a) na API-Football
 
-Kontuzje to opcjonalna funkcja v1.1. Bez tego klucza system działa normalnie,
+Kontuzje to opcjonalna funkcja. Bez tego klucza system działa normalnie,
 tylko model nie uwzględnia niedostępnych graczy.
 
 1. Wejdź na **https://www.api-football.com** (hostowane przez RapidAPI)
@@ -88,7 +90,7 @@ tylko model nie uwzględnia niedostępnych graczy.
 3. Skopiuj klucz z zakładki **Security** → `X-RapidAPI-Key`
 4. **Opcjonalnie:** zarejestruj drugie konto i skopiuj drugi klucz
 
-> Free tier: 100 requestów/dzień. System używa ~10/dzień (1 req/liga).
+> Free tier: 100 requestów/dzień. System używa ~5 req/dzień (1 req/liga).
 > Z 2 kontami masz 200 req/dzień – pełna redundancja.
 
 ---
@@ -181,8 +183,56 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 | Poniedziałek | 05:00 | Retrenuj model + wyślij statystyki ROI |
 | Środa | 09:00 | Generuj kupony (mecze środkotygodniowe) |
 | Piątek | 09:00 | Generuj kupony (mecze weekendowe) |
+| Co godzinę | — | Bot sprawdza komendy Telegram |
 
 > Godziny UTC → dodaj +1h (CET) lub +2h (CEST latem)
+
+---
+
+## Śledzenie finansów i kupony Telegram
+
+### Jak działa tracking P&L
+
+Po otrzymaniu kuponów na Telegram typowy przepływ wygląda tak:
+
+```
+1. Środa/Piątek: bot wysyła kupony → pyta "Ile wpłaciłeś?" → wpisz /stake 100
+2. Mecze rozgrywają się przez 1-3 dni
+3. Poniedziałek: bot pyta "Wygrałeś?" → /won 350 lub /lost
+4. /balance pokazuje aktualny całościowy wynik
+```
+
+Po wpisaniu `/stake` status finansowy pokazuje również **kupony oczekujące** – dzięki temu wyświetlana „strata" jest zawsze w kontekście kwot wciąż w grze:
+
+```
+⏳ Kupony oczekujące: 2
+  🎲 Łączna stawka:       50 PLN
+  🏆 Potencjalny zwrot:  187 PLN
+  (wynik powyżej nie uwzględnia kuponów w grze)
+
+📉 CAŁOŚCIOWY WYNIK: -50 PLN
+📊 Zakres z uwzgl. kuponów:
+  Worst: -100 PLN | Best: +137 PLN
+```
+
+### Komendy Telegram
+
+| Komenda | Opis | Przykład |
+|---------|------|---------|
+| `/help` | Lista wszystkich komend | `/help` |
+| `/stats` | ROI i historia kuponów | `/stats` |
+| `/balance` | Pełny status finansowy P&L z oczekującymi | `/balance` |
+| `/setbalance X` | Ustaw punkt startowy (może być ujemny) | `/setbalance -1500` |
+| `/stake X` | Zaloguj wpłatę na zakłady | `/stake 100` |
+| `/payout X` | Zaloguj wypłatę wygranej | `/payout 500` |
+| `/won X` | Kupon wygrany + kwota wypłaty | `/won 350` |
+| `/lost` | Kupon przegrany | `/lost` |
+
+> Komendy są przetwarzane co godzinę (bot_polling.yml), nie natychmiastowo.
+
+### Uwaga o zaokrągleniach
+
+Stawki Kelly są zaokrąglane do 5 PLN w sugestiach kuponów. Jeśli wpisujesz do `/stake` własną kwotę (np. `/stake 12.64`), system zapisuje dokładną wartość float i sumuje precyzyjnie – wyświetlanie jest zaokrąglone do pełnych PLN wyłącznie wizualnie.
 
 ---
 
@@ -217,10 +267,11 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 - 5 lig piłkarskich, XGBoost + Platt, value engine, kupony, Kelly, Telegram, GitHub Actions
 
 ### v1.1 ✅ (obecna)
-- ✅ Integracja API-Football (kontuzje i zawieszenia)
+- ✅ Integracja API-Football (kontuzje i zawieszenia jako cecha modelu)
 - ✅ Nowe cechy modelu: strzały celne (HST/AST)
 - ✅ Podwójne klucze API z automatycznym fallbackiem (The Odds API + API-Football)
 - ✅ Fuzzy matching w name_mapping.py (rapidfuzz)
+- ✅ Status finansowy pokazuje kupony oczekujące (zakres worst/best case)
 
 ---
 
@@ -243,13 +294,14 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 - [ ] Filtr: nie łącz meczów tej samej ligi w jednym parlaylu
 - [ ] Filtr: nie łącz meczów z tej samej kolejki (korelacja wyników)
 - [ ] Śledzenie Closing Line Value (CLV) jako metryki jakości modelu
+- [ ] Automatyczne rozliczanie wyników przez The Odds API scores
 
 ---
 
 ### v2.0 – Nowe sporty
 **Priorytet: niski | Szacowany czas: 4-6 tygodni**
 
-- [ ] Tenis ATP/WTA (dane: Jeff Sackmann GitHub, darmowe)
+- [ ] Tenis ATP/WTA – źródło danych do ustalenia (Tennis Abstract API lub sofascore; Jeff Sackmann GitHub nie jest aktualizowany na bieżąco w 2026)
 - [ ] NBA / Koszykówka (dane: basketball-reference.com)
 - [ ] Siatkówka PlusLiga (dane: volleyball.pl)
 
@@ -261,7 +313,7 @@ Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
 - [ ] Dashboard webowy (prosty HTML w GitHub Pages): wykres ROI, historia kuponów
 - [ ] Powiadomienie gdy model traci edge (degradacja)
 - [ ] Tygodniowy raport PDF wysyłany na email
-- [ ] Komenda Telegram: `/stats` → natychmiastowe statystyki (już jest, ale bez historii graficznej)
+- [ ] API-Football premium (7500 req/mies.) – rozważyć przy v2.0+ gdy więcej lig/sportów; na etapie v1.x darmowy tier (100 req/dzień) w zupełności wystarczy
 
 ---
 
