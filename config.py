@@ -65,9 +65,16 @@ ODDS_API_REGIONS = "eu"
 ODDS_API_MARKETS = "h2h"
 
 # ── API – API-Football ───────────────────────────────────────────────────────
-# 3 klucze (3 konta) – system automatycznie przełącza się na kolejny
-# gdy bieżący wyczerpie limit requestów (darmowy tier: 100/dzień/konto)
-# Łącznie: 300 req/dzień z 3 kontami
+# Rejestracja BEZPOŚREDNIA na api-football.com / api-sports.io
+#   → nagłówek: x-apisports-key (używany w fetch_injuries.py)
+#   → URL: https://v3.football.api-sports.io
+#
+# Rejestracja przez RapidAPI (rapidapi.com) – NIE używamy:
+#   → nagłówki: x-rapidapi-key + x-rapidapi-host
+#   → jeśli chcesz RapidAPI, zmień key_header w fetch_injuries.py
+#
+# Darmowy tier: 100 req/dzień/konto. System używa ~5 req/dzień (1/liga).
+# Łącznie z 3 kontami: 300 req/dzień – wystarczy z zapasem.
 API_FOOTBALL_KEYS = [
     k for k in [
         os.environ.get("API_FOOTBALL_KEY", ""),
@@ -76,7 +83,7 @@ API_FOOTBALL_KEYS = [
     ] if k
 ]
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
-API_FOOTBALL_HOST = "v3.football.api-sports.io"
+API_FOOTBALL_HOST = "v3.football.api-sports.io"  # używane tylko przy RapidAPI
 
 # ── Telegram ─────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
