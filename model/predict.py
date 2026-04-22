@@ -12,7 +12,6 @@ import pandas as pd
 
 from config import DATA_ODDS, DATA_RAW, MODEL_PATH
 from model.features import FEATURE_COLS, compute_features_upcoming, remove_margin
-from pipeline.fetch_injuries import load_latest_injuries
 from pipeline.name_mapping import normalize
 
 log = logging.getLogger(__name__)
@@ -61,7 +60,6 @@ def _best_odds(bookmakers: list, home_team: str, away_team: str) -> tuple[float,
                 else:
                     best_a = max(best_a, price)
 
-    # Fallback jeśli brak danych
     return (
         best_h if best_h > 1.0 else 2.0,
         best_d if best_d > 1.0 else 3.5,
@@ -84,7 +82,6 @@ def _parse_odds_to_upcoming(events: list) -> list[dict]:
         except Exception:
             continue
 
-        # Pomiń mecze które już się zaczęły
         if commence_dt <= now:
             continue
 
@@ -92,7 +89,6 @@ def _parse_odds_to_upcoming(events: list) -> list[dict]:
         away_raw    = ev.get("away_team", "")
         league_code = ev.get("_league_code", "")
 
-        # Normalizuj nazwy do nazw z football-data.co.uk
         home_norm = normalize(home_raw, source="odds_api")
         away_norm = normalize(away_raw, source="odds_api")
 
@@ -133,7 +129,7 @@ def predict_matches() -> list:
     df_hist = pd.read_csv(f"{DATA_RAW}/all_matches.csv")
     df_hist["Date"] = pd.to_datetime(df_hist["Date"], errors="coerce")
 
-    events   = load_latest_odds()
+    events = load_latest_odds()
     if not events:
         return []
 
@@ -142,10 +138,7 @@ def predict_matches() -> list:
         log.warning("Brak nadchodzących meczów do predykcji.")
         return []
 
-    # Wczytaj kontuzje (opcjonalne – v1.1)
-    injuries = load_latest_injuries()
-
-    features_df = compute_features_upcoming(upcoming, df_hist, injuries)
+    features_df = compute_features_upcoming(upcoming, df_hist)
     if features_df.empty:
         log.warning("Brak features do predykcji!")
         return []
@@ -170,11 +163,9 @@ def predict_matches() -> list:
             "odds_home":        odds_h,
             "odds_draw":        odds_d,
             "odds_away":        odds_a,
-            # Prawdopodobieństwa modelu
             "prob_home":        float(proba[i, 0]),
             "prob_draw":        float(proba[i, 1]),
             "prob_away":        float(proba[i, 2]),
-            # Uczciwe prawdopodobieństwa rynku (po usunięciu marży)
             "market_prob_home": mkt_h,
             "market_prob_draw": mkt_d,
             "market_prob_away": mkt_a,
