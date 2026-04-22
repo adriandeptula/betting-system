@@ -32,6 +32,15 @@ from notify.finance import (
 )
 from notify.telegram import _send, send_stats
 
+
+def _get_pending():
+    """Bezpiecznie pobiera dane o oczekujących kuponach."""
+    try:
+        from model.evaluate import get_pending_summary
+        return get_pending_summary()
+    except Exception:
+        return None
+
 log = logging.getLogger(__name__)
 
 OFFSET_FILE = f"{DATA_RESULTS}/tg_offset.json"
@@ -106,16 +115,18 @@ def _cmd_stats() -> None:
 
 def _cmd_balance() -> None:
     s = get_summary()
-    _reply(format_summary_message(s))
+    pending = _get_pending()
+    _reply(format_summary_message(s, pending))
 
 
 def _cmd_setbalance(args: str) -> None:
     try:
         amount = float(args.strip().replace(",", "."))
         s = set_initial_balance(amount)
+        pending = _get_pending()
         _reply(
             f"✅ Punkt startowy ustawiony: <b>{amount:+.0f} PLN</b>\n\n"
-            + format_summary_message(s)
+            + format_summary_message(s, pending)
         )
     except ValueError:
         _reply("❌ Podaj liczbę, np. <code>/setbalance -1500</code>")
@@ -129,9 +140,10 @@ def _cmd_stake(args: str) -> None:
             return
         add_stake(amount)
         s = get_summary()
+        pending = _get_pending()
         _reply(
             f"✅ Zalogowano wpłatę: <b>-{amount:.0f} PLN</b>\n\n"
-            + format_summary_message(s)
+            + format_summary_message(s, pending)
         )
     except ValueError:
         _reply("❌ Podaj kwotę, np. <code>/stake 100</code>")
@@ -145,9 +157,10 @@ def _cmd_payout(args: str) -> None:
             return
         add_payout(amount)
         s = get_summary()
+        pending = _get_pending()
         _reply(
             f"✅ Zalogowano wypłatę: <b>+{amount:.0f} PLN</b>\n\n"
-            + format_summary_message(s)
+            + format_summary_message(s, pending)
         )
     except ValueError:
         _reply("❌ Podaj kwotę, np. <code>/payout 500</code>")
@@ -159,9 +172,10 @@ def _cmd_won(args: str) -> None:
         amount = float(args.strip().replace(",", "."))
         add_payout(amount, note="Wygrana z kuponu")
         s = get_summary()
+        pending = _get_pending()
         _reply(
             f"🏆 Kupon wygrany! Wypłata: <b>+{amount:.0f} PLN</b>\n\n"
-            + format_summary_message(s)
+            + format_summary_message(s, pending)
         )
     except ValueError:
         _reply(
@@ -173,9 +187,10 @@ def _cmd_won(args: str) -> None:
 def _cmd_lost() -> None:
     """Kupon przegrany – tylko informacja, stawka już zalogowana przez /stake."""
     s = get_summary()
+    pending = _get_pending()
     _reply(
         "😔 Kupon przegrany. Stawka już była zalogowana.\n\n"
-        + format_summary_message(s)
+        + format_summary_message(s, pending)
     )
 
 
