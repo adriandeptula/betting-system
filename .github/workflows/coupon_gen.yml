@@ -31,15 +31,12 @@ jobs:
 
       - name: Generate and send coupons
         env:
-          ODDS_API_KEY:         ${{ secrets.ODDS_API_KEY }}
-          ODDS_API_KEY_2:       ${{ secrets.ODDS_API_KEY_2 }}
-          ODDS_API_KEY_3:       ${{ secrets.ODDS_API_KEY_3 }}
-          API_FOOTBALL_KEY:     ${{ secrets.API_FOOTBALL_KEY }}
-          API_FOOTBALL_KEY_2:   ${{ secrets.API_FOOTBALL_KEY_2 }}
-          API_FOOTBALL_KEY_3:   ${{ secrets.API_FOOTBALL_KEY_3 }}
-          TELEGRAM_TOKEN:       ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
-          BANKROLL:             ${{ secrets.BANKROLL }}
+          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2:   ${{ secrets.ODDS_API_KEY_2 }}
+          ODDS_API_KEY_3:   ${{ secrets.ODDS_API_KEY_3 }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BANKROLL:         ${{ secrets.BANKROLL }}
         run: python main.py coupon
 
       - name: Save coupon history
