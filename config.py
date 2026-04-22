@@ -50,12 +50,14 @@ SEASONS = ["2122", "2223", "2324", "2425", "2526"]
 CURRENT_SEASON = 2025
 
 # ── API – The Odds API ───────────────────────────────────────────────────────
-# 2 klucze (2 konta) – system automatycznie przełącza się na drugi
-# gdy pierwszy wyczerpie limit requestów (darmowy tier: 500/miesiąc)
+# 3 klucze (3 konta) – system automatycznie przełącza się na kolejny
+# gdy bieżący wyczerpie limit requestów (darmowy tier: 500/miesiąc/konto)
+# Łącznie: 1500 req/miesiąc z 3 kontami
 ODDS_API_KEYS = [
     k for k in [
         os.environ.get("ODDS_API_KEY", ""),
         os.environ.get("ODDS_API_KEY_2", ""),
+        os.environ.get("ODDS_API_KEY_3", ""),
     ] if k
 ]
 ODDS_API_BASE    = "https://api.the-odds-api.com/v4"
@@ -63,12 +65,14 @@ ODDS_API_REGIONS = "eu"
 ODDS_API_MARKETS = "h2h"
 
 # ── API – API-Football ───────────────────────────────────────────────────────
-# 2 klucze (2 konta) – system automatycznie przełącza się na drugi
-# gdy pierwszy wyczerpie limit requestów (darmowy tier: 100/dzień)
+# 3 klucze (3 konta) – system automatycznie przełącza się na kolejny
+# gdy bieżący wyczerpie limit requestów (darmowy tier: 100/dzień/konto)
+# Łącznie: 300 req/dzień z 3 kontami
 API_FOOTBALL_KEYS = [
     k for k in [
         os.environ.get("API_FOOTBALL_KEY", ""),
         os.environ.get("API_FOOTBALL_KEY_2", ""),
+        os.environ.get("API_FOOTBALL_KEY_3", ""),
     ] if k
 ]
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
@@ -81,15 +85,23 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # ── Model ─────────────────────────────────────────────────────────────────────
 FORM_WINDOW     = 5      # Ostatnie N meczów do obliczania formy
 MIN_EDGE        = 0.05   # Minimalna przewaga nad kursem bukmachera (5%)
-MIN_MODEL_PROB  = 0.40   # Minimalna pewność modelu (40%)
+MIN_MODEL_PROB  = 0.40   # Minimalna pewność modelu dla 1X2 (40%)
 KELLY_FRACTION  = 0.25   # Frakcja Kelly (0.25 = bezpieczna)
 MAX_BET_PCT     = 0.03   # Max 3% bankrollu na jeden kupon
 BANKROLL        = float(os.environ.get("BANKROLL", "1000"))  # PLN
 
-# ── Kupon ─────────────────────────────────────────────────────────────────────
+# ── Kupon – zakresy kursów ────────────────────────────────────────────────────
+# 1X2 (wynik meczu)
+MIN_ODDS         = 1.50  # Min kurs na nogę 1X2
+MAX_ODDS         = 3.20  # Max kurs 1X2 (unikamy longshots)
+
+# Double chance (1X, X2, 12) – kursy są z natury niższe
+DC_MIN_ODDS      = 1.20  # Min kurs na nogę double chance
+DC_MAX_ODDS      = 2.00  # Max kurs double chance (powyżej to już ryzykowne)
+DC_MIN_MODEL_PROB = 0.55  # Min pewność modelu dla double chance (wyższa niż 1X2)
+
+# ── Kupon – ogólne ────────────────────────────────────────────────────────────
 MAX_LEGS         = 3     # Max nogi w jednym parlayach
-MIN_ODDS         = 1.50  # Min kurs na nogę
-MAX_ODDS         = 3.20  # Max kurs na nogę (unikamy longshots)
 COUPONS_PER_WEEK = 3     # Ile kuponów tygodniowo
 
 # ── Ścieżki plików ────────────────────────────────────────────────────────────
