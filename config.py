@@ -11,43 +11,35 @@ LEAGUES = {
         "odds_key": "soccer_epl",
         "name": "Premier League",
         "country": "England",
-        "apifootball_id": 39,
     },
     "BL": {
         "fd_code": "D1",
         "odds_key": "soccer_germany_bundesliga",
         "name": "Bundesliga",
         "country": "Germany",
-        "apifootball_id": 78,
     },
     "LL": {
         "fd_code": "SP1",
         "odds_key": "soccer_spain_la_liga",
         "name": "La Liga",
         "country": "Spain",
-        "apifootball_id": 140,
     },
     "SA": {
         "fd_code": "I1",
         "odds_key": "soccer_italy_serie_a",
         "name": "Serie A",
         "country": "Italy",
-        "apifootball_id": 135,
     },
     "EK": {
         "fd_code": "P1",
         "odds_key": "soccer_poland_ekstraklasa",
         "name": "Ekstraklasa",
         "country": "Poland",
-        "apifootball_id": 106,
     },
 }
 
 # Sezony historyczne do pobrania (format football-data.co.uk)
 SEASONS = ["2122", "2223", "2324", "2425", "2526"]
-
-# Aktualny sezon dla API-Football (format YYYY)
-CURRENT_SEASON = 2025
 
 # ── API – The Odds API ───────────────────────────────────────────────────────
 # 3 klucze (3 konta) – system automatycznie przełącza się na kolejny
@@ -64,38 +56,25 @@ ODDS_API_BASE    = "https://api.the-odds-api.com/v4"
 ODDS_API_REGIONS = "eu"
 ODDS_API_MARKETS = "h2h"
 
-# ── API – API-Football ───────────────────────────────────────────────────────
-# Rejestracja BEZPOŚREDNIA na api-football.com / api-sports.io
-#   → nagłówek: x-apisports-key (używany w fetch_injuries.py)
-#   → URL: https://v3.football.api-sports.io
-#
-# Rejestracja przez RapidAPI (rapidapi.com) – NIE używamy:
-#   → nagłówki: x-rapidapi-key + x-rapidapi-host
-#   → jeśli chcesz RapidAPI, zmień key_header w fetch_injuries.py
-#
-# Darmowy tier: 100 req/dzień/konto. System używa ~5 req/dzień (1/liga).
-# Łącznie z 3 kontami: 300 req/dzień – wystarczy z zapasem.
-API_FOOTBALL_KEYS = [
-    k for k in [
-        os.environ.get("API_FOOTBALL_KEY", ""),
-        os.environ.get("API_FOOTBALL_KEY_2", ""),
-        os.environ.get("API_FOOTBALL_KEY_3", ""),
-    ] if k
-]
-API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
-API_FOOTBALL_HOST = "v3.football.api-sports.io"  # używane tylko przy RapidAPI
-
 # ── Telegram ─────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ── Model ─────────────────────────────────────────────────────────────────────
-FORM_WINDOW     = 5      # Ostatnie N meczów do obliczania formy
-MIN_EDGE        = 0.05   # Minimalna przewaga nad kursem bukmachera (5%)
-MIN_MODEL_PROB  = 0.40   # Minimalna pewność modelu dla 1X2 (40%)
-KELLY_FRACTION  = 0.25   # Frakcja Kelly (0.25 = bezpieczna)
-MAX_BET_PCT     = 0.03   # Max 3% bankrollu na jeden kupon
-BANKROLL        = float(os.environ.get("BANKROLL", "1000"))  # PLN
+FORM_WINDOW          = 8      # Ostatnie N meczów do obliczania formy (v1.3: 5→8)
+FORM_HALFLIFE_DAYS   = 21     # Półokres zaniku wagi formy [v1.3]: mecz 3 tyg. temu
+                               # waży 2x mniej niż z ostatniego tygodnia
+MIN_EDGE             = 0.05   # Minimalna przewaga nad kursem bukmachera (5%)
+MIN_MODEL_PROB       = 0.40   # Minimalna pewność modelu dla 1X2 (40%)
+KELLY_FRACTION       = 0.25   # Frakcja Kelly (0.25 = bezpieczna)
+MAX_BET_PCT          = 0.03   # Max 3% bankrollu na jeden kupon
+BANKROLL             = float(os.environ.get("BANKROLL", "1000"))  # PLN
+
+# ── Elo rating [v1.3] ────────────────────────────────────────────────────────
+ELO_START = 1500   # Startowy rating dla nowych drużyn
+ELO_K     = 20     # Współczynnik K – czułość na wyniki
+                    # 20 = standard dla piłki nożnej
+                    # Wyższy K → szybsza adaptacja, większe wahania
 
 # ── Kupon – zakresy kursów ────────────────────────────────────────────────────
 # 1X2 (wynik meczu)
@@ -104,8 +83,8 @@ MAX_ODDS         = 3.20  # Max kurs 1X2 (unikamy longshots)
 
 # Double chance (1X, X2, 12) – kursy są z natury niższe
 DC_MIN_ODDS      = 1.20  # Min kurs na nogę double chance
-DC_MAX_ODDS      = 2.00  # Max kurs double chance (powyżej to już ryzykowne)
-DC_MIN_MODEL_PROB = 0.55  # Min pewność modelu dla double chance (wyższa niż 1X2)
+DC_MAX_ODDS      = 2.00  # Max kurs double chance
+DC_MIN_MODEL_PROB = 0.55  # Min pewność modelu dla double chance
 
 # ── Kupon – ogólne ────────────────────────────────────────────────────────────
 MAX_LEGS         = 3     # Max nogi w jednym parlayach
@@ -115,6 +94,5 @@ COUPONS_PER_WEEK = 3     # Ile kuponów tygodniowo
 DATA_RAW       = "data/raw"
 DATA_PROCESSED = "data/processed"
 DATA_ODDS      = "data/odds"
-DATA_INJURIES  = "data/injuries"
 DATA_RESULTS   = "data/results"
 MODEL_PATH     = "data/model/model.pkl"
