@@ -1,4 +1,4 @@
-# 🤖 AI Betting System – v1.1
+# 🤖 AI Betting System – v1.2
 
 System automatyczny do generowania value betów oparty na XGBoost + kalibracji Platta.
 Działa w 100% na GitHub Actions. Koszt: **0 zł/miesiąc**.
@@ -37,24 +37,29 @@ CO H 00:00 → Bot sprawdza komendy Telegram i odpowiada
 
 **Cechy modelu:** forma (pkt/gole/strzały celne), H2H, kursy rynkowe (fair prob), wskaźnik kontuzji drużyny
 
+**Obsługiwane typy zakładów:**
+- **1X2** – wygrana gospodarza / remis / wygrana gościa
+- **Double chance** – 1X (gospodarz lub remis), X2 (remis lub gość), 12 (gospodarz lub gość bez remisu)
+  *(wyprowadzane z kursów h2h — zero dodatkowych requestów API)*
+
 **Stawki:** Frakcjonalne kryterium Kelly (25% pełnego Kelly)
 
-**Klucze API:** każde API obsługuje 2 klucze z automatycznym przełączaniem gdy limit wyczerpany
+**Klucze API:** każde API obsługuje **3 klucze** z automatycznym przełączaniem gdy limit wyczerpany
 
 ---
 
 ## Krok po kroku: pierwsze uruchomienie
 
-### KROK 1: Stwórz konto(a) na The Odds API
+### KROK 1: Stwórz konta na The Odds API
 
 1. Wejdź na **https://the-odds-api.com**
 2. Kliknij **Get API Key** → zarejestruj się
 3. Skopiuj klucz API
-4. **Opcjonalnie:** załóż drugie konto (inny email) i skopiuj drugi klucz
+4. **Zalecane:** załóż drugie i trzecie konto (różne emaile) i skopiuj klucze
 
-> Free tier: 500 requestów/miesiąc na konto. System używa ~60-90/miesiąc.
-> Z 2 kontami masz 1000 req/miesiąc – pełna redundancja.
-> Gdy pierwszy klucz się wyczerpie, system **automatycznie** przełączy się na drugi.
+> Free tier: 500 requestów/miesiąc na konto. System używa ~200/miesiąc.
+> Z 3 kontami masz **1500 req/miesiąc** — pełna redundancja z zapasem na rozbudowę.
+> Gdy klucz #1 się wyczerpie, system **automatycznie** przełączy się na #2, potem #3.
 
 ---
 
@@ -80,7 +85,7 @@ CO H 00:00 → Bot sprawdza komendy Telegram i odpowiada
 
 ---
 
-### KROK 3: *(Opcjonalne)* Stwórz konto(a) na API-Football
+### KROK 3: *(Opcjonalne)* Stwórz konta na API-Football
 
 Kontuzje to opcjonalna funkcja. Bez tego klucza system działa normalnie,
 tylko model nie uwzględnia niedostępnych graczy.
@@ -88,10 +93,10 @@ tylko model nie uwzględnia niedostępnych graczy.
 1. Wejdź na **https://www.api-football.com** (hostowane przez RapidAPI)
 2. Kliknij **Subscribe** → wybierz plan **Free** (100 req/dzień)
 3. Skopiuj klucz z zakładki **Security** → `X-RapidAPI-Key`
-4. **Opcjonalnie:** zarejestruj drugie konto i skopiuj drugi klucz
+4. **Zalecane:** zarejestruj drugie i trzecie konto i skopiuj klucze
 
-> Free tier: 100 requestów/dzień. System używa ~5 req/dzień (1 req/liga).
-> Z 2 kontami masz 200 req/dzień – pełna redundancja.
+> Free tier: 100 requestów/dzień na konto. System używa ~5 req/dzień (1 req/liga).
+> Z 3 kontami masz **300 req/dzień** — wystarczy na dalszą rozbudowę o kolejne ligi.
 
 ---
 
@@ -113,7 +118,7 @@ git clone https://github.com/TWOJA_NAZWA/betting-system.git
 cd betting-system
 # Skopiuj wszystkie pliki projektu tutaj
 git add .
-git commit -m "feat: v1.1 initial setup"
+git commit -m "feat: v1.2 initial setup"
 git push origin main
 ```
 
@@ -128,17 +133,19 @@ git push origin main
 |-------|---------|---------|
 | `ODDS_API_KEY` | klucz #1 z The Odds API | ✅ Tak |
 | `ODDS_API_KEY_2` | klucz #2 (drugie konto) | ⚡ Zalecany |
+| `ODDS_API_KEY_3` | klucz #3 (trzecie konto) | ⚡ Zalecany |
 | `TELEGRAM_TOKEN` | token bota Telegram | ✅ Tak |
 | `TELEGRAM_CHAT_ID` | Twój chat ID | ✅ Tak |
 | `BANKROLL` | Twój bankroll w PLN, np. `1000` | ✅ Tak |
 | `API_FOOTBALL_KEY` | klucz #1 z API-Football | ☑️ Opcjonalny |
 | `API_FOOTBALL_KEY_2` | klucz #2 (drugie konto) | ☑️ Opcjonalny |
+| `API_FOOTBALL_KEY_3` | klucz #3 (trzecie konto) | ☑️ Opcjonalny |
 
 > ⚠️ Nigdy nie wpisuj kluczy bezpośrednio w kod! Tylko przez Secrets.
 
 **Jak działa fallback kluczy:**
 System próbuje klucz #1. Jeśli odpowiedź to HTTP 429/401/402 (limit wyczerpany),
-automatycznie przełącza się na klucz #2. Żaden kupon nie zostanie pominięty.
+automatycznie przełącza się na #2, potem #3. Żaden kupon nie zostanie pominięty.
 
 ---
 
@@ -168,7 +175,7 @@ Sprawdź w logach Actions czy:
 - ✅ Dane pobrane (X meczów historycznych)
 - ✅ Kontuzje pobrane (lub pominięte gdy brak klucza API-Football)
 - ✅ Model wytrenowany (accuracy > baseline)
-- ✅ Value bety znalezione
+- ✅ Value bety znalezione (w tym ewentualnie double chance)
 - ✅ Kupony wysłane na Telegram
 
 Jeśli coś nie gra → sprawdź sekcję **Typowe błędy** w CLAUDE.md.
@@ -263,36 +270,43 @@ Stawki Kelly są zaokrąglane do 5 PLN w sugestiach kuponów. Jeśli wpisujesz d
 
 ## Plan Rozwoju
 
-### v1.0 ✅ (poprzednia)
+### v1.0 ✅
 - 5 lig piłkarskich, XGBoost + Platt, value engine, kupony, Kelly, Telegram, GitHub Actions
 
-### v1.1 ✅ (obecna)
+### v1.1 ✅
 - ✅ Integracja API-Football (kontuzje i zawieszenia jako cecha modelu)
 - ✅ Nowe cechy modelu: strzały celne (HST/AST)
-- ✅ Podwójne klucze API z automatycznym fallbackiem (The Odds API + API-Football)
+- ✅ Podwójne klucze API z automatycznym fallbackiem
 - ✅ Fuzzy matching w name_mapping.py (rapidfuzz)
 - ✅ Status finansowy pokazuje kupony oczekujące (zakres worst/best case)
 
+### v1.2 ✅ (obecna)
+- ✅ **3 klucze API** dla The Odds API i API-Football (1500 req/mies. + 300 req/dzień)
+- ✅ **Double chance markets** (1X, X2, 12) — wyprowadzane z h2h, zero nowych requestów
+  - Osobny zakres kursów: DC_MIN_ODDS=1.20, DC_MAX_ODDS=2.00
+  - Wyższy próg pewności modelu: DC_MIN_MODEL_PROB=0.55
+  - Nowe emoji w kuponach Telegram: 🏠🤝 / 🤝✈️ / 🏠✈️
+
 ---
 
-### v1.2 – Lepszy model
-**Priorytet: średni | Szacowany czas: 2-3 tygodnie**
+### v1.3 – Lepszy model
+**Priorytet: wysoki | Szacowany czas: 2-3 tygodnie**
 
 - [ ] Hyperparameter tuning (Optuna/RandomSearch)
 - [ ] Ensemble: XGBoost + LightGBM + uśrednianie
-- [ ] Feature: forma ważona (ostatnie mecze ważniejsze niż dawne)
-- [ ] Feature: dysproporcja sił (ranking Elo drużyn)
+- [ ] Feature: forma ważona wagą czasową (ostatnie mecze ważniejsze)
+- [ ] Feature: ranking Elo drużyn
 - [ ] Osobny mini-model dla remisów
 - [ ] Calibration plot – wizualizacja jakości kalibracji
 
 ---
 
-### v1.3 – Lepsze kupony
-**Priorytet: średni | Szacowany czas: 1 tydzień**
+### v1.4 – Lepsze kupony i over/under
+**Priorytet: średni | Szacowany czas: 1-2 tygodnie**
 
+- [ ] Over/Under gole (totals) — wymaga osobnego modelu regresji sumy goli
 - [ ] Round-robin: z 4 value betów generuj wszystkie kombinacje 2-nożne
 - [ ] Filtr: nie łącz meczów tej samej ligi w jednym parlaylu
-- [ ] Filtr: nie łącz meczów z tej samej kolejki (korelacja wyników)
 - [ ] Śledzenie Closing Line Value (CLV) jako metryki jakości modelu
 - [ ] Automatyczne rozliczanie wyników przez The Odds API scores
 
@@ -301,7 +315,7 @@ Stawki Kelly są zaokrąglane do 5 PLN w sugestiach kuponów. Jeśli wpisujesz d
 ### v2.0 – Nowe sporty
 **Priorytet: niski | Szacowany czas: 4-6 tygodni**
 
-- [ ] Tenis ATP/WTA – źródło danych do ustalenia (Tennis Abstract API lub sofascore; Jeff Sackmann GitHub nie jest aktualizowany na bieżąco w 2026)
+- [ ] Tenis ATP/WTA – źródło danych do ustalenia (Tennis Abstract API lub sofascore; Jeff Sackmann GitHub nieaktualne w 2026)
 - [ ] NBA / Koszykówka (dane: basketball-reference.com)
 - [ ] Siatkówka PlusLiga (dane: volleyball.pl)
 
@@ -313,7 +327,7 @@ Stawki Kelly są zaokrąglane do 5 PLN w sugestiach kuponów. Jeśli wpisujesz d
 - [ ] Dashboard webowy (prosty HTML w GitHub Pages): wykres ROI, historia kuponów
 - [ ] Powiadomienie gdy model traci edge (degradacja)
 - [ ] Tygodniowy raport PDF wysyłany na email
-- [ ] API-Football premium (7500 req/mies.) – rozważyć przy v2.0+ gdy więcej lig/sportów; na etapie v1.x darmowy tier (100 req/dzień) w zupełności wystarczy
+- [ ] API-Football premium (7500 req/mies.) — rozważyć przy v2.0+ gdy więcej lig/sportów; na etapie v1.x darmowy tier (100 req/dzień × 3 konta) w zupełności wystarczy
 
 ---
 
