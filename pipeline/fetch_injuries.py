@@ -1,8 +1,17 @@
 """
 pipeline/fetch_injuries.py – Pobiera dane o kontuzjach z API-Football.
 
-Źródło: https://www.api-football.com (RapidAPI)
+Źródło: https://www.api-football.com (api-sports.io – rejestracja bezpośrednia)
 Endpoint: GET /injuries?league={id}&season={year}
+
+UWAGA dot. nagłówków:
+  api-sports.io (bezpośrednia rejestracja na api-football.com):
+    → nagłówek: x-apisports-key: TWOJ_KLUCZ
+  RapidAPI (rejestracja przez rapidapi.com):
+    → nagłówki: x-rapidapi-key + x-rapidapi-host
+
+Ten plik używa api-sports.io (x-apisports-key).
+Jeśli rejestrujesz się przez RapidAPI – zmień AUTH_HEADER poniżej.
 
 WAŻNE: NIE przekazujemy parametru `date`. Parametr `date` oznacza "kontuzje
 dla meczów NA TEN DZIEŃ" – jeśli danego dnia nie ma meczów, API zwraca [].
@@ -59,9 +68,11 @@ def _fetch_injuries_for_league(
         "league": league_id,
         "season": season,
     }
-    headers = {
-        "x-rapidapi-host": config.API_FOOTBALL_HOST,
-    }
+    # api-sports.io (rejestracja bezpośrednia) używa nagłówka x-apisports-key.
+    # Jeśli korzystasz z RapidAPI, zmień na:
+    #   headers = {"x-rapidapi-host": config.API_FOOTBALL_HOST}
+    #   key_header = "x-rapidapi-key"
+    headers = {}
 
     try:
         data, _ = api_get(
@@ -69,7 +80,7 @@ def _fetch_injuries_for_league(
             keys=config.API_FOOTBALL_KEYS,
             params=params,
             headers=headers,
-            key_header="x-rapidapi-key",
+            key_header="x-apisports-key",
         )
     except RuntimeError as exc:
         log.error(f"API-Football [{league_code}]: {exc}")
