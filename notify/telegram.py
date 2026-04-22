@@ -39,7 +39,14 @@ def _send(text: str) -> bool:
 
 
 def _outcome_emoji(outcome: str) -> str:
-    return {"H": "🏠", "D": "🤝", "A": "✈️"}.get(outcome, "❓")
+    return {
+        "H":  "🏠",
+        "D":  "🤝",
+        "A":  "✈️",
+        "1X": "🏠🤝",   # double chance: gospodarz lub remis
+        "X2": "🤝✈️",   # double chance: remis lub gość
+        "12": "🏠✈️",   # double chance: gospodarz lub gość
+    }.get(outcome, "❓")
 
 
 def _type_emoji(coupon_type: str) -> str:
