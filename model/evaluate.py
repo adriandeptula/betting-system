@@ -96,6 +96,62 @@ def update_coupon_results() -> dict:
     return stats
 
 
+def get_pending_summary() -> dict:
+    """
+    Zwraca podsumowanie kuponów ze statusem PENDING.
+    Używane do pokazania użytkownikowi że 'strata' jest tak naprawdę w grze.
+
+    Zwraca:
+        {
+          "count": int,                  # liczba oczekujących kuponów
+          "total_staked_model": float,   # łączna stawka wg modelu (z builder.py)
+          "potential_return": float,     # potencjalny zwrot przy wygraniu wszystkich
+          "legs_summary": list[str],     # krótki opis każdego kuponu
+        }
+    """
+    history_path = f"{DATA_RESULTS}/coupons_history.json"
+    if not Path(history_path).exists():
+        return {"count": 0, "total_staked_model": 0.0, "potential_return": 0.0, "legs_summary": []}
+
+    with open(history_path, encoding="utf-8") as f:
+        history = json.load(f)
+
+    count = 0
+    total_staked = 0.0
+    potential_return = 0.0
+    legs_summary = []
+
+    for entry in history:
+        for coupon in entry.get("coupons", []):
+            if coupon.get("result", "PENDING") != "PENDING":
+                continue
+
+            count += 1
+            stake = float(coupon.get("stake", 0))
+            odds  = float(coupon.get("total_odds", 1.0))
+            total_staked   += stake
+            potential_return += stake * odds
+
+            # Krótki opis: data + typ + kurs
+            date_str = entry.get("date", "?")[:10]
+            coupon_type = coupon.get("type", "?")
+            legs = coupon.get("legs", [])
+            teams = " + ".join(
+                f"{l.get('home_team','?')[:12]} vs {l.get('away_team','?')[:12]}"
+                for l in legs
+            )
+            legs_summary.append(
+                f"{date_str} | {coupon_type} @ {odds:.2f}x | {teams}"
+            )
+
+    return {
+        "count": count,
+        "total_staked_model": round(total_staked, 2),
+        "potential_return": round(potential_return, 2),
+        "legs_summary": legs_summary,
+    }
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     update_coupon_results()
