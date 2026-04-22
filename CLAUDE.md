@@ -333,13 +333,18 @@ System WYMAGA KOREKTY jeśli:
 - Automatyczne rozliczanie wyników przez API scores
 
 ### v2.0
-- Tenis ATP/WTA (dane: Jeff Sackmann GitHub, darmowe)
+- Tenis ATP/WTA: źródło danych DO USTALENIA (Jeff Sackmann za stary stan na 2026;
+  alternatywy: Tennis Abstract API, sofascore – wymagają analizy przed implementacją)
 - NBA (dane: basketball-reference)
 - Siatkówka PlusLiga
 
 ### v2.1
 - Dashboard GitHub Pages (wykres ROI, historia kuponów)
 - Tygodniowy raport PDF na email
+- API-Football premium (7500 req/mies.): rozważyć przy wchodzeniu w v2.0+,
+  gdy mamy więcej lig/sportów i kontuzje stają się krytyczną cechą.
+  Na etapie v1.x darmowy tier (100 req/dzień) w zupełności wystarczy.
+  Match history budujemy samodzielnie przez football-data.co.uk.
 
 ---
 
