@@ -29,18 +29,15 @@ jobs:
 
       - name: Fetch data and odds
         env:
-          ODDS_API_KEY:         ${{ secrets.ODDS_API_KEY }}
-          ODDS_API_KEY_2:       ${{ secrets.ODDS_API_KEY_2 }}
-          ODDS_API_KEY_3:       ${{ secrets.ODDS_API_KEY_3 }}
-          API_FOOTBALL_KEY:     ${{ secrets.API_FOOTBALL_KEY }}
-          API_FOOTBALL_KEY_2:   ${{ secrets.API_FOOTBALL_KEY_2 }}
-          API_FOOTBALL_KEY_3:   ${{ secrets.API_FOOTBALL_KEY_3 }}
+          ODDS_API_KEY:   ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2: ${{ secrets.ODDS_API_KEY_2 }}
+          ODDS_API_KEY_3: ${{ secrets.ODDS_API_KEY_3 }}
         run: python main.py fetch
 
       - name: Commit updated data
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/raw/ data/odds/ data/injuries/
+          git add data/raw/ data/odds/
           git diff --staged --quiet || git commit -m "data: update $(date +'%Y-%m-%d')"
           git push
