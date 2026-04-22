@@ -85,10 +85,14 @@ def api_get(
             continue
 
         if resp.status_code == 200:
-            log.info(
-                f"[api_utils] Klucz #{idx} OK "
-                f"(pozostało requestów: {resp.headers.get('x-requests-remaining', '?')})"
+            # The Odds API:  x-requests-remaining
+            # api-sports.io: x-ratelimit-requests-remaining
+            remaining = (
+                resp.headers.get("x-requests-remaining")
+                or resp.headers.get("x-ratelimit-requests-remaining")
+                or "?"
             )
+            log.info(f"[api_utils] Klucz #{idx} OK (pozostało requestów: {remaining})")
             return resp.json(), key
 
         if resp.status_code in _QUOTA_ERRORS:
