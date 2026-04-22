@@ -124,8 +124,17 @@ def get_summary() -> dict:
     }
 
 
-def format_summary_message(s: dict) -> str:
-    """Formatuje podsumowanie do wiadomości Telegram."""
+def format_summary_message(s: dict, pending: dict | None = None) -> str:
+    """
+    Formatuje podsumowanie do wiadomości Telegram.
+
+    Parametry
+    ---------
+    s       : słownik z get_summary()
+    pending : opcjonalny słownik z get_pending_summary() – dodaje sekcję
+              oczekujących kuponów, żeby użytkownik wiedział że 'strata'
+              jest w rzeczywistości wciąż w grze
+    """
     overall = s["overall"]
     net     = s["net_from_bets"]
     roi     = s["roi"]
@@ -139,11 +148,11 @@ def format_summary_message(s: dict) -> str:
         f"Start: <b>{s['initial_balance']:+.0f} PLN</b>"
     )
 
-    return (
+    msg = (
         f"💼 <b>STATUS FINANSOWY</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{initial_str}\n\n"
-        f"<b>Zakłady:</b>\n"
+        f"<b>Zakłady rozliczone:</b>\n"
         f"  💸 Wpłacono łącznie:   <b>{s['total_staked']:.0f} PLN</b>\n"
         f"  💰 Wypłacono łącznie:  <b>{s['total_payout']:.0f} PLN</b>\n"
         f"  {net_emoji} Wynik z zakładów:   <b>{net:+.0f} PLN</b>\n"
@@ -151,7 +160,34 @@ def format_summary_message(s: dict) -> str:
         f"<b>Kupony:</b>\n"
         f"  ✅ Wygrane:   {s['won_coupons']}\n"
         f"  ❌ Przegrane: {s['lost_coupons']}\n"
-        f"  📋 Łącznie:   {s['total_coupons']}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  📋 Łącznie:   {s['total_coupons']}\n"
+    )
+
+    # Sekcja oczekujących kuponów (opcjonalna)
+    if pending and pending.get("count", 0) > 0:
+        p = pending
+        msg += (
+            f"\n⏳ <b>Kupony oczekujące: {p['count']}</b>\n"
+            f"  🎲 Łączna stawka:        <b>{p['total_staked_model']:.0f} PLN</b>\n"
+            f"  🏆 Potencjalny zwrot:    <b>{p['potential_return']:.0f} PLN</b>\n"
+            f"  <i>(wynik powyżej nie uwzględnia kuponów w grze)</i>\n"
+        )
+        for leg in p["legs_summary"]:
+            msg += f"  • <code>{leg}</code>\n"
+
+    msg += (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{overall_emoji} <b>CAŁOŚCIOWY WYNIK: {overall:+.0f} PLN</b>"
     )
+
+    # Jeśli są pending kupony, dodaj korektę "rzeczywistego" wyniku
+    if pending and pending.get("count", 0) > 0:
+        worst_case = overall - pending["total_staked_model"]
+        best_case  = overall + pending["potential_return"]
+        msg += (
+            f"\n📊 Zakres z uwzgl. kuponów:\n"
+            f"  Worst: <b>{worst_case:+.0f} PLN</b> | "
+            f"Best: <b>{best_case:+.0f} PLN</b>"
+        )
+
+    return msg
