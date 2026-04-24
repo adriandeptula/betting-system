@@ -12,7 +12,7 @@ Wklej ten plik jako instrukcję systemową w Claude Projects.
 - Calibration plot zapisywany do data/model/calibration.png
 - FORM_WINDOW zwiększony z 5 do 8 meczów
 - Usunięto zależność od zewnętrznych API kontuzji
-- Łącznie 18 cech (było 17: -2 injury_score, +3 elo)
+- Łącznie 18 cech (było 15 w v1.2, +3 elo w v1.3)
 
 **Poprzednie wersje:**
 - v1.2: 3 klucze API, double chance markets (1X, X2, 12), kupony oczekujące w bocie
@@ -44,6 +44,7 @@ betting_system/
 │
 ├── main.py                     ← ORKIESTRATOR. Tryby: fetch | train | coupon | stats | bot | full
 ├── config.py                   ← WSZYSTKIE parametry. Ligi, klucze API, model, Elo, Kelly.
+│                                  [v1.4] Walidacja BANKROLL > 0. TAX_THRESHOLD_PLN=2280.
 ├── requirements.txt            ← pandas, numpy, scikit-learn, xgboost, requests,
 │                                  pytz, rapidfuzz, matplotlib
 │
@@ -54,41 +55,48 @@ betting_system/
 │   ├── fetch_odds.py           ← Pobiera kursy z The Odds API (h2h)
 │   │                              Zapisuje: data/odds/odds_YYYY-MM-DD.json
 │   └── name_mapping.py         ← Mapowanie nazw drużyn + fuzzy matching (rapidfuzz)
+│                                  [v1.4] Naprawione kolizje aliasów (Sassuolo/Sampdoria)
 │
 ├── model/
 │   ├── features.py             ← [v1.3] Feature engineering walk-forward
-│   │                              NOWE: forma ważona czasowo + Elo rating
-│   │                              18 cech: forma(10) + H2H(2) + kursy(3) + Elo(3)
-│   │                              FEATURE_COLS – kolejność musi być stała
+│   │                              18 cech: forma ważona(10) + H2H(2) + kursy(3) + Elo(3)
+│   │                              FEATURE_COLS – kolejność musi być STAŁA
 │   ├── train.py                ← XGBoost + CalibratedClassifierCV. Walk-forward 85/15.
-│   │                              [v1.3] Zapisuje calibration.png do data/model/
+│   │                              [v1.4] _simulate_roi używa kursów z ~5% marżą (nie fair)
 │   ├── predict.py              ← Predykcje dla nadchodzących meczów
-│   └── evaluate.py             ← ROI z historii kuponów + get_pending_summary()
+│   └── evaluate.py             ← [v1.4] Model ROI. Auto-rozliczanie przez The Odds API /scores.
+│                                  auto_resolve_pending_coupons() – wywoływana co godzinę przez bota
+│                                  update_coupon_results()       – wywoływana w run_stats()
+│                                  get_pending_summary()         – stan kuponów oczekujących
 │
 ├── coupon/
 │   ├── value_engine.py         ← Value bety dla 1X2 i double chance (1X/X2/12)
 │   │                              1X2: edge>5%, kursy 1.50–3.20, prob>40%
 │   │                              DC:  edge>5%, kursy 1.20–2.00, prob>55%
-│   ├── kelly.py                ← Frakcjonalne Kelly (0.25). Stawki zaokr. do 5 PLN.
+│   ├── kelly.py                ← [v1.4] Frakcjonalne Kelly (0.25). Naprawka double-compute.
 │   └── builder.py              ← Singiel / podwójny / potrójny (rozłączne mecze)
 │                                  Zapisuje: data/results/coupons_history.json
 │
 ├── notify/
-│   ├── telegram.py             ← Formatowanie kuponów. DC emojis: 🏠🤝/🤝✈️/🏠✈️
-│   ├── finance.py              ← P&L tracking + format_summary_message(pending)
-│   └── bot_handler.py          ← Polling Telegram + komendy + pending w odpowiedziach
+│   ├── telegram.py             ← [v1.4] send_message() (publiczne API, dawniej _send).
+│   │                              Kupony z numerami #1/#2/#3. DC emojis: 🏠🤝/🤝✈️/🏠✈️
+│   ├── finance.py              ← [v1.4] Player ROI. Per-kupon stawki i wypłaty.
+│   │                              add_stake(amount, coupon_id) / add_payout(amount, coupon_id)
+│   │                              Oddzielony od Model ROI (evaluate.py)
+│   └── bot_handler.py          ← [v1.4] Polling + auto-resolve przy każdym poll.
+│                                  /stake [nr] [kwota] / /won [nr] [kwota] / /lost [nr]
 │
 ├── data/
 │   ├── raw/all_matches.csv
 │   ├── odds/odds_*.json
 │   ├── results/
-│   │   ├── coupons_history.json
-│   │   ├── finance.json
-│   │   ├── stats.json
+│   │   ├── coupons_history.json  ← kupony z result (PENDING/WON/LOST) + resolved_at
+│   │   ├── finance.json          ← transakcje gracza per coupon_id
+│   │   ├── stats.json            ← Model ROI stats
 │   │   └── tg_offset.json
 │   └── model/
 │       ├── model.pkl
-│       └── calibration.png     ← [v1.3] Nowy: wykres jakości kalibracji
+│       └── calibration.png
 │
 └── .github/workflows/
     ├── daily_fetch.yml         ← env: ODDS_API_KEY, _2, _3
@@ -114,15 +122,22 @@ KROK 2 - MODEL (weekly_retrain, poniedziałek)
 
 KROK 3 - KUPONY (coupon_gen, środa + piątek)
   model.pkl + odds_*.json
-    → predict.py (1X2 probs + Elo)
+    → predict.py (1X2 probs)
     → value_engine.py (1X2 + DC value bets)
-    → builder.py → Telegram
+    → builder.py → Telegram (kupony z numerami #1, #2, #3...)
 
 KROK 4 - BOT (bot_polling, co godzinę)
-  Telegram getUpdates → bot_handler.py → komendy → finance.py + pending → odpowiedź
+  → auto_resolve_pending_coupons() [evaluate.py]
+      The Odds API /scores → rozlicza PENDING kupony w coupons_history.json
+      (Model ROI automatyczny – niezależny od gracza)
+  → getUpdates → bot_handler.py → komendy:
+      /stake [nr] [kwota] → finance.json (Player ROI)
+      /won [nr] [kwota]   → finance.json
+      /lost [nr]          → (stawka już zalogowana przez /stake)
 
 KROK 5 - STATYSTYKI (weekly_retrain, poniedziałek)
-  coupons_history.json + finance.json → evaluate.py → stats.json → Telegram
+  coupons_history.json → evaluate.py  → stats.json     → Telegram (/stats = Model ROI)
+  finance.json         → finance.py   → get_summary()  → Telegram (/balance = Player ROI)
 ```
 
 ---
@@ -238,16 +253,22 @@ BANKROLL           - bankroll w PLN          [WYMAGANY]
 
 ## Komendy Telegram
 
-| Komenda | Opis |
-|---------|------|
-| /help | Lista komend |
-| /stats | ROI i historia kuponów |
-| /balance | Status finansowy P&L + kupony oczekujące |
-| /setbalance X | Ustaw punkt startowy |
-| /stake X | Zaloguj wpłatę |
-| /payout X | Zaloguj wypłatę |
-| /won X | Kupon wygrany |
-| /lost | Kupon przegrany |
+| Komenda | Opis | Przykład |
+|---------|------|---------|
+| /help | Lista komend | /help |
+| /stats | Model ROI (jakość predykcji) | /stats |
+| /balance | Twój rzeczywisty P&L (Player ROI) | /balance |
+| /pending | Lista kuponów oczekujących na wynik | /pending |
+| /setbalance X | Ustaw punkt startowy | /setbalance -1500 |
+| /stake [nr] X | Stawka na konkretny kupon | /stake 1 100 |
+| /won [nr] X | Kupon wygrany, dostałem X PLN | /won 1 350 |
+| /lost [nr] | Kupon przegrany | /lost 2 |
+
+**Model ROI** (z /stats) – automatycznie rozliczany przez The Odds API /scores.
+Używa sugerowanych stawek Kelly. Mierzy jakość predykcji niezależnie od gracza.
+
+**Player ROI** (z /balance) – rzeczywisty P&L gracza z finance.json.
+Stawki i wypłaty per kupon, wprowadzane ręcznie przez /stake i /won.
 
 ---
 
@@ -267,28 +288,46 @@ BANKROLL           - bankroll w PLN          [WYMAGANY]
 
 ## Plan rozwoju
 
-### v1.3 ✅ (obecna)
+### v1.3 ✅
 Forma ważona czasowo + Elo + calibration plot
 
-### v1.4 (następna) – Zaawansowany model
-- Hyperparameter tuning (Optuna)
-- Ensemble XGBoost + LightGBM
-- Osobny mini-model dla remisów
-- Elo z uwzględnieniem siły harmonogramu (SOS)
+### v1.4 ✅ (obecna)
+- Bugfixy: kelly_stake double-compute, kolizje name_mapping, walidacja BANKROLL
+- Auto-rozliczanie kuponów przez The Odds API /scores
+- Rozdzielenie Model ROI (evaluate.py) od Player ROI (finance.py)
+- Per-kupon komendy: /stake [nr] [kwota], /won [nr] [kwota], /lost [nr]
+- Realistyczna symulacja ROI w train.py (~5% marża bukmachera)
+- Publiczne API send_message() w telegram.py
+- Usunięto fetch_injuries.py (darmowe API bez danych bieżącego sezonu)
 
-### v1.5 – Over/under + lepsza selekcja
-- Totals market (over/under gole)
-- Round-robin kupony
-- CLV tracking
-- Automatyczne rozliczanie wyników
+> **UWAGA Elo cross-liga:** build_elo_history buduje rating dla wszystkich lig razem.
+> Nie wpływa negatywnie dopóki predykcje są per liga. Rozdzielić Elo per liga
+> w v2.0 przy dodaniu nowych sportów / porównań cross-liga.
+
+> **UWAGA podatek 10%:** pobierany od wygranych > 2280 PLN.
+> Przy BANKROLL < 15 000 PLN próg nieosiągalny. Dla większych bankrolli
+> uwzględnić korektę w kelly_stake (v1.5 TODO, patrz config.py TAX_THRESHOLD_PLN).
+
+### v1.5 – Model + CLV
+- Hyperparameter tuning (Optuna, n_trials=100)
+- Ensemble XGBoost + LightGBM z uśrednianiem prawdopodobieństw
+- CLV tracking: porównanie kursów z momentu generowania z closing odds
+- class_weight dla remisów (D: 1.5 vs H/A: 1.0)
+- Elo osobno per liga
+
+### v1.6 – Over/under + lepsza selekcja
+- Totals market (over/under gole) – model Poissona
+- CLV monitoring + alert degradacji modelu
+- Forma ważona dom/wyjazd osobno
+- Elo SOS (Strength of Schedule)
 
 ### v2.0 – Nowe sporty
-- Tenis ATP/WTA
-- NBA (basketball-reference.com)
+- Tenis ATP/WTA (tennis-data.co.uk, Jeff Sackmann GitHub)
 - Siatkówka PlusLiga
+- NBA – tylko z dostępem do advanced stats
 
 ### v2.1 – Monitoring
-- Dashboard GitHub Pages
+- Dashboard GitHub Pages (ROI, CLV trend, historia)
 - Raport PDF na email
 
 ---
@@ -306,9 +345,11 @@ Forma ważona czasowo + Elo + calibration plot
 
 1. Actions → zielony checkmark?
 2. Logi → szukaj ERROR lub WARNING
-3. data/raw/all_matches.csv istnieje? Jeśli nie: `python main.py fetch`
-4. data/model/model.pkl istnieje? Jeśli nie: `python main.py train`
-5. data/odds/odds_YYYY-MM-DD.json z dzisiaj? Jeśli nie: `python main.py fetch`
-6. GitHub Secrets → ODDS_API_KEY i TELEGRAM_* ustawione?
-7. Telegram → /start do bota
-8. Logi "Wszystkie klucze wyczerpane"? → sprawdź limity 3 kont The Odds API
+3. `data/raw/all_matches.csv` istnieje? Jeśli nie: `python main.py fetch`
+4. `data/model/model.pkl` istnieje? Jeśli nie: `python main.py train`
+5. `data/odds/odds_YYYY-MM-DD.json` z dzisiaj? Jeśli nie: `python main.py fetch`
+6. GitHub Secrets → ODDS_API_KEY i TELEGRAM_* i BANKROLL ustawione?
+7. BANKROLL > 0? System rzuci ValueError przy BANKROLL=0.
+8. Telegram → /start do bota, potem /help
+9. Logi "Wszystkie klucze wyczerpane"? → sprawdź limity 3 kont The Odds API
+10. Kupony wciąż PENDING po tygodniu? → sprawdź logi auto-resolve, może mecz był odwołany
