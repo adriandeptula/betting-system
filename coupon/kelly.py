@@ -47,11 +47,11 @@ def parlay_stake(legs: list, bankroll: float = BANKROLL) -> float:
     if not legs:
         return 5.0
 
-    individual = [
-        kelly_stake(leg["model_prob"], leg["bet_odds"], bankroll)
-        for leg in legs
-        if kelly_stake(leg["model_prob"], leg["bet_odds"], bankroll) > 0
-    ]
+    individual = []
+    for leg in legs:
+        s = kelly_stake(leg["model_prob"], leg["bet_odds"], bankroll)
+        if s > 0:
+            individual.append(s)
 
     if not individual:
         return 5.0
