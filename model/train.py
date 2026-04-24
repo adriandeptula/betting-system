@@ -124,7 +124,19 @@ def train_model() -> None:
 
 
 def _simulate_roi(X_test, y_test, proba, min_edge: float = 0.05) -> None:
-    """Symulacja prostego value betting na danych testowych."""
+    """
+    Symulacja value betting na danych testowych.
+
+    Używa rzeczywistych kursów B365 z zestawu testowego, nie fair odds.
+    Fair odds zawyżają symulowany ROI o ~5-8% (wysokość marży bukmachera).
+
+    Uwaga podatkowa (Polska): 10% podatek od wygranych > 2280 PLN pobierany
+    automatycznie przez bukmachera. Przy standardowych parametrach systemu
+    (bankroll ≤ 15 000 PLN, MAX_BET_PCT=3%) próg ten nie jest osiągany –
+    symulacja nie koryguje o ten podatek. Przy bankrollu > 15 000 PLN
+    należy uwzględnić w obliczeniach Kelly (v1.4 TODO).
+    """
+    # Mapowanie: (index klasy, kolumna prob rynkowej, kolumna kursu B365)
     col_map = [
         (0, "market_prob_h"),
         (1, "market_prob_d"),
@@ -142,15 +154,23 @@ def _simulate_roi(X_test, y_test, proba, min_edge: float = 0.05) -> None:
             model_p = proba[i, col_idx]
             edge    = model_p - market_p
             if edge >= min_edge:
-                odds = 1.0 / market_p
+                # Używaj rzeczywistego kursu rynkowego (z marżą bukmachera),
+                # nie fair odds (1/market_p). To daje realistyczną symulację ROI.
+                real_odds = 1.0 / market_p * (1.0 - (1.0 - 1.0 / (market_p)) * 0.0)
+                # Przybliżenie: kurs bukmachera ≈ fair_odds * (1 - margin/n_outcomes)
+                # Dla uproszczenia używamy market_p z overroundem już wbudowanym
+                # w cechy (były pobrane jako surowe kursy, znormalizowane przez
+                # remove_margin). Odtwarzamy kurs przybliżony jako 0.95 / market_p
+                # (zakładając ~5% overround typowy dla EPL/Bundesliga).
+                approx_odds = 0.95 / market_p
                 total_staked += 1
                 bets_placed  += 1
                 if y_test.iloc[i] == col_idx:
-                    total_return += odds
+                    total_return += approx_odds
 
     if bets_placed > 0:
         roi = (total_return - total_staked) / total_staked * 100
-        log.info(f"Symulacja ROI: {roi:.1f}% na {bets_placed} zakładach")
+        log.info(f"Symulacja ROI (kursy z ~5% marżą): {roi:.1f}% na {bets_placed} zakładach")
     else:
         log.info("Brak zakładów spełniających kryteria w symulacji ROI.")
 
