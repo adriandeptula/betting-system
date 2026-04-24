@@ -175,13 +175,27 @@ Sprawdź w logach Actions czy:
 
 ## Śledzenie finansów i kupony Telegram
 
+### Dwa niezależne systemy ROI
+
+**Model ROI** (`/stats`) – mierzy jakość predykcji modelu. Kupony są **automatycznie rozliczane** przez The Odds API (bot sprawdza wyniki co godzinę). Używa sugerowanych stawek Kelly – niezależny od tego czy gracz faktycznie postawił.
+
+**Player ROI** (`/balance`) – mierzy Twój rzeczywisty P&L. Stawki i wypłaty wprowadzasz ręcznie, per kupon.
+
 ### Jak działa tracking P&L
 
 ```
-1. Środa/Piątek: bot wysyła kupony → pyta "Ile wpłaciłeś?" → wpisz /stake 100
-2. Mecze rozgrywają się przez 1-3 dni
-3. Poniedziałek: bot pyta "Wygrałeś?" → /won 350 lub /lost
-4. /balance pokazuje aktualny całościowy wynik
+1. Śr/Pt: bot wysyła kupony z numerami (#1, #2, #3)
+   → wpisz /stake [nr] [kwota] dla każdego kuponu osobno
+   → np. /stake 1 100  /stake 2 50  /stake 3 0
+
+2. Mecze rozgrywają się → bot AUTO-ROZLICZA Model ROI przez API
+
+3. Gdy wiesz wynik u swojego bukmachera:
+   → /won [nr] [kwota]   np. /won 1 350
+   → /lost [nr]          np. /lost 2
+
+4. /balance pokazuje Twój rzeczywisty P&L
+   /stats   pokazuje Model ROI (jakość predykcji)
 ```
 
 ### Komendy Telegram
@@ -189,13 +203,13 @@ Sprawdź w logach Actions czy:
 | Komenda | Opis | Przykład |
 |---------|------|---------|
 | `/help` | Lista wszystkich komend | `/help` |
-| `/stats` | ROI i historia kuponów | `/stats` |
-| `/balance` | Pełny status finansowy P&L | `/balance` |
+| `/stats` | Model ROI (jakość predykcji) | `/stats` |
+| `/balance` | Twój rzeczywisty P&L | `/balance` |
+| `/pending` | Lista kuponów czekających na wynik | `/pending` |
 | `/setbalance X` | Ustaw punkt startowy | `/setbalance -1500` |
-| `/stake X` | Zaloguj wpłatę na zakłady | `/stake 100` |
-| `/payout X` | Zaloguj wypłatę wygranej | `/payout 500` |
-| `/won X` | Kupon wygrany + kwota wypłaty | `/won 350` |
-| `/lost` | Kupon przegrany | `/lost` |
+| `/stake [nr] X` | Zaloguj stawkę na konkretny kupon | `/stake 1 100` |
+| `/won [nr] X` | Kupon wygrany, dostałem X PLN | `/won 1 350` |
+| `/lost [nr]` | Kupon przegrany | `/lost 2` |
 
 ---
 
@@ -218,52 +232,67 @@ Sprawdź w logach Actions czy:
 
 ## Plan Rozwoju
 
-### v1.0 ✅ → v1.1 ✅ → v1.2 ✅ → v1.3 ✅ (obecna)
+### v1.0 ✅ → v1.1 ✅ → v1.2 ✅ → v1.3 ✅ → v1.4 ✅ (obecna)
 
-### v1.3 ✅ – Lepszy model
-- ✅ Forma ważona czasowo (wykładniczy zanik, halflife=21 dni)
-- ✅ Elo rating drużyn (home_elo, away_elo, elo_diff)
-- ✅ Calibration plot (data/model/calibration.png)
-- ✅ FORM_WINDOW zwiększony z 5 do 8 meczów
-- ✅ Usunięto zależność od zewnętrznego API kontuzji
+### v1.4 ✅ – Poprawki i rozliczanie
+- ✅ Auto-rozliczanie kuponów przez The Odds API /scores
+- ✅ Rozdzielenie Model ROI (predykcje) od Player ROI (rzeczywiste stawki)
+- ✅ Per-kupon komendy: `/stake [nr] [kwota]`, `/won [nr] [kwota]`, `/lost [nr]`
+- ✅ Walidacja BANKROLL (błąd przy BANKROLL=0)
+- ✅ Realistyczna symulacja ROI w train.py (z marżą bukmachera ~5%)
+- ✅ Naprawka `kelly_stake` liczone dwukrotnie w `parlay_stake`
+- ✅ Naprawka kolizji aliasów w name_mapping.py (Sassuolo/Sampdoria)
+- ✅ Publiczne API `send_message()` zamiast prywatnego `_send()`
+- ✅ Numery kuponów (#1, #2, #3) widoczne w wiadomościach Telegram
+- ✅ Usunięto fetch_injuries.py (darmowe API nie zawiera danych bieżącego sezonu)
+
+> **Podatek 12%** (od gier) wliczony w overround bukmachera – `remove_margin()` go eliminuje.
+> **Podatek 10%** (od wygranych > 2280 PLN) przy obecnych parametrach nieosiągalny.
+> Przy bankrollu > 15 000 PLN należy uwzględnić w obliczeniach Kelly (v1.5 TODO).
+
+> **Elo cross-liga** – obecna implementacja buduje rating Elo dla wszystkich lig razem.
+> Nie ma to negatywnego wpływu dopóki predykcje są wykonywane w ramach jednej ligi.
+> Przy dodaniu porównań cross-liga (np. tenis, puchary UEFA) należy rozdzielić Elo per liga.
+> Zaplanowane jako część v2.0 (nowe sporty).
 
 ---
 
-### v1.4 – Zaawansowany model
+### v1.5 – Model + CLV
 **Priorytet: wysoki | Szacowany czas: 2-3 tygodnie**
 
-- [ ] Hyperparameter tuning (Optuna) – gdy Elo i forma ważona są już ustabilizowane
-- [ ] Ensemble: XGBoost + LightGBM + uśrednianie
-- [ ] Osobny mini-model dla remisów (najtrudniejszy wynik do przewidzenia)
-- [ ] Forma ważona osobno dla meczów domowych i wyjazdowych
-- [ ] Elo z uwzględnieniem siły przeciwnika (SOS – Strength of Schedule)
+- [ ] Hyperparameter tuning (Optuna, n_trials=100)
+- [ ] Ensemble: XGBoost + LightGBM z uśrednianiem prawdopodobieństw
+- [ ] CLV tracking: zapisuj kursy w momencie generowania kuponu i porównuj
+      z kursami 24h przed meczem (The Odds API historical odds endpoint)
+- [ ] `class_weight={'H': 1, 'D': 1.5, 'A': 1}` – poprawi kalibrację remisów
+- [ ] Elo osobno per liga (nie all-in-one)
 
 ---
 
-### v1.5 – Lepsze kupony i over/under
+### v1.6 – Over/under + lepsza selekcja
 **Priorytet: średni | Szacowany czas: 1-2 tygodnie**
 
-- [ ] Over/Under gole (totals) — wymaga osobnego modelu regresji sumy goli
-- [ ] Round-robin: z 4 value betów generuj wszystkie kombinacje 2-nożne
-- [ ] Śledzenie Closing Line Value (CLV) jako metryki jakości modelu
-- [ ] Automatyczne rozliczanie wyników przez The Odds API scores
+- [ ] Over/Under gole (totals) — model Poissona, +1 req/liga The Odds API
+- [ ] CLV monitoring: alert gdy model traci edge (degradacja)
+- [ ] Forma ważona osobno dla meczów domowych i wyjazdowych
+- [ ] Elo z uwzględnieniem siły harmonogramu (SOS)
 
 ---
 
 ### v2.0 – Nowe sporty
 **Priorytet: niski | Szacowany czas: 4-6 tygodni**
 
-- [ ] Tenis ATP/WTA
-- [ ] NBA / Koszykówka (dane: basketball-reference.com)
+- [ ] Tenis ATP/WTA (dane: tennis-data.co.uk + Jeff Sackmann GitHub, oba free)
 - [ ] Siatkówka PlusLiga
+- [ ] NBA – tylko jeśli dostęp do advanced stats (back-to-back, injuries feed)
 
 ---
 
 ### v2.1 – Monitoring i UX
 **Priorytet: niski | Szacowany czas: 1-2 tygodnie**
 
-- [ ] Dashboard webowy (GitHub Pages): wykres ROI, historia kuponów
-- [ ] Powiadomienie gdy model traci edge (degradacja)
+- [ ] Dashboard webowy (GitHub Pages): wykres ROI, historia kuponów, CLV trend
+- [ ] Raport PDF na email (cotygodniowy)
 - [ ] Tygodniowy raport PDF wysyłany na email
 
 ---
