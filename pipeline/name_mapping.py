@@ -205,7 +205,10 @@ TEAM_MAP: dict[str, list[str]] = {
     "Pisa":             ["AC Pisa 1909", "Pisa SC"],
     "Spezia":           ["Spezia Calcio"],
     "Palermo":          ["US Città di Palermo", "Palermo FC"],
-    "Sassuolo B":       ["US Sassuolo"],  # Serie B relegation
+    # Uwaga: Sassuolo B i Sampdoria B celowo pominięte – mają identyczne aliasy
+    # jak drużyny Serie A ("US Sassuolo", "UC Sampdoria"). Przy zjeździe do Serie B
+    # fuzzy matching poprawnie dopasuje do drużyny macierzystej, co jest pożądane
+    # (brak danych treningowych dla Serie B – używamy historii z Serie A).
     "Bari":             ["SSC Bari"],
     "Brescia":          ["Brescia Calcio"],
     "Catanzaro":        ["US Catanzaro"],
@@ -215,7 +218,6 @@ TEAM_MAP: dict[str, list[str]] = {
     "Mantova":          ["Mantova FC"],
     "Modena":           ["Modena FC"],
     "Salernitana B":    ["US Salernitana 1919"],
-    "Sampdoria B":      ["UC Sampdoria"],
     "Sudtirol":         ["FC Südtirol"],
     "Reggiana":         ["AC Reggiana"],
 }
