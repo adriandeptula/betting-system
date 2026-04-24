@@ -68,7 +68,29 @@ MIN_EDGE             = 0.05   # Minimalna przewaga nad kursem bukmachera (5%)
 MIN_MODEL_PROB       = 0.40   # Minimalna pewność modelu dla 1X2 (40%)
 KELLY_FRACTION       = 0.25   # Frakcja Kelly (0.25 = bezpieczna)
 MAX_BET_PCT          = 0.03   # Max 3% bankrollu na jeden kupon
-BANKROLL             = float(os.environ.get("BANKROLL", "1000"))  # PLN
+
+_bankroll_raw = os.environ.get("BANKROLL", "1000")
+try:
+    BANKROLL = float(_bankroll_raw)
+except ValueError:
+    BANKROLL = 1000.0
+
+if BANKROLL <= 0:
+    raise ValueError(
+        f"BANKROLL musi być > 0, otrzymano: '{_bankroll_raw}'. "
+        "Ustaw zmienną BANKROLL w GitHub Secrets (np. BANKROLL=1000)."
+    )
+
+# ── Podatek od wygranych (Polska) ─────────────────────────────────────────────
+# 12% podatek od gier (podatek bukmachera) jest już wliczony w overround –
+#   remove_margin() automatycznie go eliminuje przy normalizacji kursów.
+# 10% podatek zryczałtowany od wygranej: pobierany gdy jednorazowa wygrana
+#   przekracza 2280 PLN (od pełnej kwoty, automatycznie przez bukmachera).
+#   Przy obecnych parametrach (BANKROLL ≤ 15 000 PLN, MAX_BET_PCT=3%,
+#   MAX_ODDS=3.20) maksymalna wygrana to ok. 30*MAX_ODDS ≈ 96 PLN – próg
+#   nigdy nie jest osiągany. Dla bankrollu > 15 000 PLN warto uwzględnić
+#   w obliczeniach Kelly (patrz: kelly.py i TODO w v1.4).
+TAX_THRESHOLD_PLN = 2280.0  # próg podatku 10% od wygranej
 
 # ── Elo rating [v1.3] ────────────────────────────────────────────────────────
 ELO_START = 1500   # Startowy rating dla nowych drużyn
