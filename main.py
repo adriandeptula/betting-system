@@ -37,10 +37,13 @@ def run_train() -> None:
 
 def run_coupon() -> None:
     log.info("══ COUPON: generowanie kuponów ═══════════════════")
+    import json
+    from pathlib import Path
     from model.predict import predict_matches
     from coupon.value_engine import find_value_bets
     from coupon.builder import build_coupons, save_coupons
-    from notify.telegram import send_coupons, _send
+    from notify.telegram import send_coupons
+    from config import DATA_RESULTS
 
     predictions = predict_matches()
     if not predictions:
@@ -50,23 +53,24 @@ def run_coupon() -> None:
 
     value_bets = find_value_bets(predictions)
     coupons    = build_coupons(value_bets)
-    save_coupons(coupons)
-    send_coupons(coupons)
 
-    if coupons:
-        _send(
-            "💸 <b>Zaloguj swoje zakłady:</b>\n\n"
-            "Ile wpłaciłeś na powyższe kupony łącznie?\n\n"
-            "  /stake 100  – wpłaciłem 100 PLN\n"
-            "  /stake 0    – nie zagrałem nic tym razem\n\n"
-            "<i>Możesz wpisać kilka komend osobno dla każdego kuponu.</i>"
-        )
+    # Oblicz globalny numer startowy: numery kuponów muszą być ciągłe w historii
+    # żeby /stake 3 zawsze wskazywało właściwy kupon #3
+    first_index  = 1
+    history_path = Path(DATA_RESULTS) / "coupons_history.json"
+    if history_path.exists():
+        with open(history_path, encoding="utf-8") as f:
+            history = json.load(f)
+        first_index = sum(len(e.get("coupons", [])) for e in history) + 1
+
+    save_coupons(coupons)
+    send_coupons(coupons, first_coupon_index=first_index)
 
 
 def run_stats() -> None:
     log.info("══ STATS: obliczanie ROI ═════════════════════════")
     from model.evaluate import update_coupon_results, get_pending_summary
-    from notify.telegram import send_stats, _send
+    from notify.telegram import send_stats, send_message
     from notify.finance import get_summary, format_summary_message
 
     stats = update_coupon_results()
@@ -75,14 +79,15 @@ def run_stats() -> None:
     s = get_summary()
     if s["total_coupons"] > 0 or s["initial_balance"] != 0:
         pending = get_pending_summary()
-        _send(format_summary_message(s, pending))
+        send_message(format_summary_message(s, pending))
 
-    _send(
+    send_message(
         "🎯 <b>Czas rozliczenia!</b>\n\n"
         "Czy któryś z poprzednich kuponów wygrał?\n\n"
-        "  /won 500   – wygrałem, wyciągnąłem 500 PLN\n"
-        "  /lost      – kupon przegrał\n\n"
-        "<i>Pomiń jeśli już rozliczyłeś wcześniej.</i>"
+        "  /won [nr] [kwota]  – np. /won 3 500\n"
+        "  /lost [nr]         – np. /lost 2\n\n"
+        "<i>Pomiń jeśli już rozliczyłeś wcześniej.\n"
+        "Użyj /pending żeby zobaczyć listę oczekujących.</i>"
     )
 
 
