@@ -18,7 +18,6 @@ def send_message(text: str) -> bool:
     """
     Wysyła wiadomość na Telegram. Zwraca True przy sukcesie.
 
-    Publiczne API – używaj tej funkcji zamiast _send z poprzedniej wersji.
     W trybie developerskim (brak tokenu) wypisuje na konsolę.
     """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -68,7 +67,7 @@ def format_coupon(coupon: dict, index: int) -> str:
     Numer #index widoczny w nagłówku – gracz używa go w /stake i /won.
     """
     league_names = {code: info["name"] for code, info in LEAGUES.items()}
-    emoji = _type_emoji(coupon["type"])
+    emoji        = _type_emoji(coupon["type"])
 
     lines = [
         f"{emoji} <b>KUPON #{index} — {coupon['type']}</b>",
@@ -114,7 +113,6 @@ def send_coupons(coupons: list, first_coupon_index: int = 1) -> None:
     Args:
         coupons:            lista kuponów z builder.py
         first_coupon_index: globalny numer pierwszego kuponu w tej wysyłce
-                            (pobierany z historii żeby numery były ciągłe)
     """
     date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
@@ -164,14 +162,16 @@ def send_stats(stats: dict) -> None:
     """Wysyła cotygodniowe statystyki Model ROI."""
     roi_emoji = "📈" if stats.get("model_roi", 0) >= 0 else "📉"
     send_message(
-        f"📊 <b>MODEL ROI – STATYSTYKI</b>\n"
+        f"📊 <b>MODEL ROI — STATYSTYKI</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Łącznie kuponów:  {stats.get('total_coupons', 0)}\n"
-        f"Wygrane:          {stats.get('won', 0)} ✅\n"
-        f"Przegrane:        {stats.get('lost', 0)} ❌\n"
-        f"Oczekujące:       {stats.get('pending', 0)} ⏳\n"
+        f"Łącznie kuponów:     {stats.get('total_coupons', 0)}\n"
+        f"Wygrane:             {stats.get('won', 0)} ✅\n"
+        f"Przegrane:           {stats.get('lost', 0)} ❌\n"
+        f"Oczekujące:          {stats.get('pending', 0)} ⏳\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{roi_emoji} Model ROI: <b>{stats.get('model_roi', 0):.1f}%</b>\n"
+        f"💰 Postawiono (rozl.): <b>{stats.get('staked_resolved', 0):.0f} PLN</b>\n"
+        f"💵 Zwrot (WON):        <b>{stats.get('total_model_return', 0):.0f} PLN</b>\n"
+        f"{roi_emoji} Model ROI:          <b>{stats.get('model_roi', 0):.1f}%</b>\n"
         "<i>(sugerowane stawki Kelly, nie rzeczywiste gracza)\n"
-        "Użyj /balance żeby zobaczyć swój rzeczywisty P&L.</i>"
+        "Użyj /balance żeby zobaczyć swój rzeczywisty P&amp;L.</i>"
     )
