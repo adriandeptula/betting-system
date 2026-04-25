@@ -4,12 +4,11 @@ Dwukierunkowa komunikacja z Telegramem – obsługa komend.
 
 Działa przez polling (getUpdates) uruchamiany co godzinę przez GitHub Actions.
 Każde uruchomienie:
-  1. Auto-rozlicza PENDING kupony (jeśli są)
+  1. Auto-rozlicza PENDING kupony (jeśli są, dynamiczny days_back)
   2. Sprawdza nowe komendy i odpowiada
 
-Komendy finansowe przyjmują teraz NR KUPONU jako argument:
+Komendy finansowe przyjmują NR KUPONU jako argument:
   /stake 1 100   – postawiłem 100 PLN na kupon #1
-  /stake 2 50    – postawiłem 50 PLN na kupon #2
   /stake 3 0     – nie postawiłem na kupon #3
   /won 1 350     – kupon #1 wygrał, dostałem 350 PLN
   /lost 2        – kupon #2 przegrał
@@ -17,14 +16,14 @@ Komendy finansowe przyjmują teraz NR KUPONU jako argument:
 Stare komendy bez numeru kuponu nadal działają (fallback do coupon_id="?").
 
 Dostępne komendy:
-  /stats              – Model ROI (jakość predykcji modelu)
-  /balance            – Player ROI (Twój rzeczywisty P&L)
-  /setbalance X       – ustaw punkt startowy (np. /setbalance -1500)
-  /stake [nr] X       – zaloguj stawkę na kupon (np. /stake 1 100)
-  /won [nr] X         – kupon wygrany, dostałem X PLN (np. /won 1 350)
-  /lost [nr]          – kupon przegrany (np. /lost 2)
-  /pending            – lista kuponów oczekujących na rozliczenie
-  /help               – lista komend
+  /help              – lista komend
+  /stats             – Model ROI (jakość predykcji)
+  /balance           – Player ROI (Twój P&L)
+  /pending           – kupony oczekujące na wynik
+  /setbalance X      – ustaw punkt startowy
+  /stake [nr] X      – zaloguj stawkę na kupon
+  /won [nr] X        – kupon wygrany, dostałem X PLN
+  /lost [nr]         – kupon przegrany
 """
 import json
 import logging
@@ -94,21 +93,17 @@ def _parse_coupon_nr_and_amount(args: str) -> tuple[str, float | None]:
     """
     Parsuje argumenty komendy w dwóch formatach:
       '/stake 1 100'  → coupon_id="1", amount=100.0
-      '/stake 100'    → coupon_id="?", amount=100.0  (stary format, bez numeru)
+      '/stake 100'    → coupon_id="?", amount=100.0  (stary format)
       '/won 1 350'    → coupon_id="1", amount=350.0
-      '/won 350'      → coupon_id="?", amount=350.0
-    Zwraca (coupon_id, amount) lub (coupon_id, None) przy błędzie parsowania.
     """
     parts = args.strip().split()
     if len(parts) == 0:
         return "?", None
     if len(parts) == 1:
-        # Stary format: sama kwota, brak numeru kuponu
         try:
             return "?", float(parts[0].replace(",", "."))
         except ValueError:
             return "?", None
-    # Nowy format: nr kuponu + kwota
     try:
         coupon_id = parts[0]
         amount    = float(parts[1].replace(",", "."))
@@ -127,11 +122,11 @@ def _parse_coupon_nr(args: str) -> str:
 
 def _cmd_help() -> None:
     _reply(
-        "🤖 <b>AI Betting Bot – Komendy</b>\n"
+        "🤖 <b>AI Betting Bot — Komendy</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>📊 Statystyki:</b>\n"
         "  /stats           – Model ROI (jakość predykcji)\n"
-        "  /balance         – Twój rzeczywisty P&L\n"
+        "  /balance         – Twój rzeczywisty P&amp;L\n"
         "  /pending         – kupony czekające na wynik\n\n"
         "<b>💰 Stawki (wpisuj po otrzymaniu kuponów):</b>\n"
         "  /stake [nr] [kwota]  – postaw na kupon\n"
@@ -185,8 +180,8 @@ def _cmd_pending() -> None:
 
 def _cmd_setbalance(args: str) -> None:
     try:
-        amount = float(args.strip().replace(",", "."))
-        s      = set_initial_balance(amount)
+        amount  = float(args.strip().replace(",", "."))
+        s       = set_initial_balance(amount)
         pending = _get_pending()
         _reply(
             f"✅ Punkt startowy ustawiony: <b>{amount:+.0f} PLN</b>\n\n"
@@ -214,8 +209,8 @@ def _cmd_stake(args: str) -> None:
         return
 
     add_stake(amount, coupon_id=coupon_id)
-    s       = get_summary()
-    pending = _get_pending()
+    s            = get_summary()
+    pending      = _get_pending()
     coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
     _reply(
         f"✅ Stawka na kupon {coupon_label}: <b>-{amount:.0f} PLN</b>\n\n"
@@ -236,8 +231,8 @@ def _cmd_won(args: str) -> None:
         return
 
     add_payout(amount, coupon_id=coupon_id, note=f"Wygrana kupon #{coupon_id}")
-    s       = get_summary()
-    pending = _get_pending()
+    s            = get_summary()
+    pending      = _get_pending()
     coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
     _reply(
         f"🏆 Kupon {coupon_label} wygrany! Wypłata: <b>+{amount:.0f} PLN</b>\n\n"
@@ -248,8 +243,8 @@ def _cmd_won(args: str) -> None:
 def _cmd_lost(args: str) -> None:
     coupon_id    = _parse_coupon_nr(args)
     coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
-    s       = get_summary()
-    pending = _get_pending()
+    s            = get_summary()
+    pending      = _get_pending()
     _reply(
         f"😔 Kupon {coupon_label} przegrany. Stawka już zalogowana przez /stake.\n\n"
         + format_summary_message(s, pending)
@@ -281,8 +276,7 @@ def _dispatch(text: str) -> None:
         "/won":        lambda: _cmd_won(args),
         "/lost":       lambda: _cmd_lost(args),
         "/start":      lambda: _cmd_help(),
-        # Aliasy dla wstecznej kompatybilności
-        "/payout":     lambda: _cmd_won(args),
+        "/payout":     lambda: _cmd_won(args),   # alias wsteczny
     }
 
     handler = handlers.get(cmd)
@@ -300,14 +294,13 @@ def _dispatch(text: str) -> None:
 def poll_and_respond() -> int:
     """
     Sprawdza nowe wiadomości i odpowiada na komendy.
-    Przy każdym wywołaniu auto-rozlicza PENDING kupony (bez callów API jeśli brak).
+    Przy każdym wywołaniu auto-rozlicza PENDING kupony (dynamiczny days_back).
     Zwraca liczbę przetworzonych wiadomości.
     """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("Brak TELEGRAM_TOKEN lub TELEGRAM_CHAT_ID – bot wyłączony.")
         return 0
 
-    # Auto-resolve przy każdym poll (szybko zwraca gdy brak PENDING)
     try:
         from model.evaluate import auto_resolve_pending_coupons
         resolved = auto_resolve_pending_coupons()
@@ -315,7 +308,7 @@ def poll_and_respond() -> int:
             pending = _get_pending()
             send_message(
                 f"🤖 <b>Auto-rozliczono {resolved} kuponów</b>\n\n"
-                + (format_summary_message(get_summary(), pending) if resolved else "")
+                + format_summary_message(get_summary(), pending)
             )
     except Exception as e:
         log.warning(f"Auto-resolve error: {e}")
