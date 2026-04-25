@@ -54,8 +54,7 @@ def run_coupon() -> None:
     value_bets = find_value_bets(predictions)
     coupons    = build_coupons(value_bets)
 
-    # Oblicz globalny numer startowy: numery kuponów muszą być ciągłe w historii
-    # żeby /stake 3 zawsze wskazywało właściwy kupon #3
+    # Globalny numer startowy: ciągłe numery w historii (#1, #2, #3...)
     first_index  = 1
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
     if history_path.exists():
