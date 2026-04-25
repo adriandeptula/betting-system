@@ -4,19 +4,23 @@ pipeline/fetch_stats.py – Pobiera historyczne wyniki meczów z football-data.c
 Źródło: https://www.football-data.co.uk/data.php
 Format CSV: mecze z wynikami, kursami, statystykami strzałów itp.
 
-Pobierane kolumny (v1.1 – dodano HST/AST):
+Pobierane kolumny:
   Date, HomeTeam, AwayTeam
   FTHG, FTAG, FTR          – wynik końcowy (gole i rezultat H/D/A)
-  HS, AS                    – strzały ogółem (home/away shots)
-  HST, AST                  – strzały celne (home/away shots on target)  ← v1.1
-  B365H, B365D, B365A       – kursy Bet365 (podstawowe dla modelu)
+  HS, AS                    – strzały ogółem
+  HST, AST                  – strzały celne (v1.1)
+  B365H, B365D, B365A       – kursy Bet365
 
 Zapisuje: data/raw/all_matches.csv
+
+v1.5 poprawka:
+  - Deduplikacja po concat: drop_duplicates(subset=["Date","HomeTeam","AwayTety"]).
+    Football-data.co.uk przy aktualizacjach sezonu może generować duplikaty
+    meczów z pogranicza sezonów. Duplikaty zafałszowałyby Elo i formę.
 """
 import io
 import logging
 import os
-from datetime import datetime
 
 import pandas as pd
 import requests
@@ -25,15 +29,13 @@ import config
 
 log = logging.getLogger(__name__)
 
-# Kolumny które muszą wystąpić po pobraniu CSV (reszta jest opcjonalna)
 _REQUIRED_COLS = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"]
 
-# Kolumny do zachowania (jeśli istnieją w źródle)
 _KEEP_COLS = [
     "Date", "HomeTeam", "AwayTeam",
     "FTHG", "FTAG", "FTR",
     "HS",   "AS",
-    "HST",  "AST",            # v1.1 – strzały celne
+    "HST",  "AST",
     "B365H", "B365D", "B365A",
 ]
 
@@ -51,7 +53,6 @@ def _fetch_csv(fd_code: str, season: str) -> pd.DataFrame | None:
         return None
 
     try:
-        # football-data.co.uk używa encodingu latin-1
         df = pd.read_csv(
             io.StringIO(resp.content.decode("latin-1")),
             on_bad_lines="skip",
@@ -60,25 +61,20 @@ def _fetch_csv(fd_code: str, season: str) -> pd.DataFrame | None:
         log.warning(f"Błąd parsowania CSV {url}: {exc}")
         return None
 
-    # Sprawdź minimalne kolumny
     missing = [c for c in _REQUIRED_COLS if c not in df.columns]
     if missing:
-        log.warning(f"Brakuje kolumn {missing} w {url} – pomiń")
+        log.warning(f"Brakuje kolumn {missing} w {url} – pomijam")
         return None
 
-    # Zachowaj tylko potrzebne kolumny (które istnieją)
     existing = [c for c in _KEEP_COLS if c in df.columns]
-    df = df[existing].copy()
+    df       = df[existing].copy()
 
-    # Filtruj wiersze z brakującym wynikiem
     df = df.dropna(subset=["FTHG", "FTAG", "FTR"])
     df = df[df["FTR"].isin(["H", "D", "A"])]
 
-    # Normalizuj datę do ISO (football-data używa DD/MM/YY lub DD/MM/YYYY)
     df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
     df = df.dropna(subset=["Date"])
 
-    # Dodaj ligę i sezon
     league_code = next(
         (k for k, v in config.LEAGUES.items() if v["fd_code"] == fd_code),
         fd_code,
@@ -91,7 +87,12 @@ def _fetch_csv(fd_code: str, season: str) -> pd.DataFrame | None:
 
 
 def fetch_all_stats() -> None:
-    """Pobiera wszystkie ligi i sezony, łączy i zapisuje all_matches.csv."""
+    """
+    Pobiera wszystkie ligi i sezony, łączy, deduplikuje i zapisuje all_matches.csv.
+
+    v1.5: deduplikacja po concat chroni przed podwójnym liczeniem meczów
+    z pogranicza sezonów co zafałszowałoby Elo i formę drużyn.
+    """
     frames: list[pd.DataFrame] = []
 
     for league_code, league_cfg in config.LEAGUES.items():
@@ -106,19 +107,28 @@ def fetch_all_stats() -> None:
         return
 
     all_matches = pd.concat(frames, ignore_index=True)
+
+    # Deduplikacja: ten sam mecz mógł pojawić się w dwóch sezonach CSV
+    before_dedup = len(all_matches)
+    all_matches  = all_matches.drop_duplicates(
+        subset=["Date", "HomeTeam", "AwayTeam"]
+    ).reset_index(drop=True)
+    after_dedup  = len(all_matches)
+
+    if before_dedup != after_dedup:
+        log.info(f"Deduplikacja: usunięto {before_dedup - after_dedup} duplikatów")
+
     all_matches = all_matches.sort_values("Date").reset_index(drop=True)
 
     os.makedirs(config.DATA_RAW, exist_ok=True)
     out_path = os.path.join(config.DATA_RAW, "all_matches.csv")
     all_matches.to_csv(out_path, index=False)
 
-    # Raport o dostępności HST/AST
     has_hst = all_matches["HST"].notna().sum() if "HST" in all_matches.columns else 0
-    has_ast = all_matches["AST"].notna().sum() if "AST" in all_matches.columns else 0
-    pct = has_hst / max(len(all_matches), 1) * 100
+    pct     = has_hst / max(len(all_matches), 1) * 100
 
     log.info(
         f"✓ Zapisano {len(all_matches)} meczów → {out_path}\n"
-        f"  Strzały celne (HST/AST): {has_hst}/{len(all_matches)} wierszy "
-        f"({pct:.0f}% pokrycie)"
+        f"  Sezony: {config.SEASONS}\n"
+        f"  Strzały celne (HST/AST): {has_hst}/{len(all_matches)} ({pct:.0f}% pokrycie)"
     )
