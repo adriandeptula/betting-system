@@ -7,7 +7,7 @@ Problem: ta sama drużyna ma różne nazwy w różnych źródłach.
   API-Football:        "Manchester Utd"
 
 v1.1: fuzzy matching (rapidfuzz) jako fallback gdy brak ręcznego mapowania.
-Nieznane drużyny są logowane z sugestią najbliższego dopasowania.
+v1.5: guard na None/pusty string w normalize() — brak crashu gdy API zwróci null.
 
 Jak dodać nowe mapowanie:
   Znajdź w logach linię "Brak mapowania: X" i dodaj wpis do TEAM_MAP poniżej.
@@ -19,8 +19,6 @@ log = logging.getLogger(__name__)
 # ── Ręczne mapowania ─────────────────────────────────────────────────────────
 # Klucz: nazwa z football-data.co.uk (model trenuje na tej nazwie)
 # Wartości: nazwy spotykane w The Odds API i API-Football
-#
-# Format: "fd_name": ["odds_api_name_1", "odds_api_name_2", ...]
 
 TEAM_MAP: dict[str, list[str]] = {
     # ── Premier League ───────────────────────────────────────────────────────
@@ -144,7 +142,7 @@ TEAM_MAP: dict[str, list[str]] = {
     "Radomiak":         ["Radomiak Radom"],
     "Arka Gdynia":      ["Arka"],
 
-    # ── Championship (EFL) – pojawia się w The Odds API ──────────────────────
+    # ── Championship (EFL) ───────────────────────────────────────────────────
     "Burnley":          ["Burnley FC"],
     "Sunderland":       ["Sunderland AFC"],
     "Sheffield Weds":   ["Sheffield Wednesday"],
@@ -168,7 +166,7 @@ TEAM_MAP: dict[str, list[str]] = {
     "Portsmouth":       ["Portsmouth FC"],
     "Oxford United":    ["Oxford Utd"],
 
-    # ── 2. Bundesliga – pojawia się w The Odds API ────────────────────────────
+    # ── 2. Bundesliga ─────────────────────────────────────────────────────────
     "Hamburg":          ["Hamburger SV", "HSV"],
     "St Pauli":         ["FC St. Pauli", "St. Pauli"],
     "Hannover":         ["Hannover 96"],
@@ -183,7 +181,7 @@ TEAM_MAP: dict[str, list[str]] = {
     "Braunschweig":     ["Eintracht Braunschweig"],
     "Hertha":           ["Hertha BSC"],
 
-    # ── La Liga 2 – pojawia się w The Odds API ────────────────────────────────
+    # ── La Liga 2 ─────────────────────────────────────────────────────────────
     "Elche":            ["Elche CF"],
     "Levante":          ["Levante UD"],
     "Oviedo":           ["Real Oviedo"],
@@ -200,15 +198,13 @@ TEAM_MAP: dict[str, list[str]] = {
     "Ferrol":           ["Racing de Ferrol"],
     "Cartagena":        ["FC Cartagena"],
 
-    # ── Serie B – pojawia się w The Odds API ──────────────────────────────────
+    # ── Serie B ───────────────────────────────────────────────────────────────
     "Cremonese":        ["US Cremonese"],
     "Pisa":             ["AC Pisa 1909", "Pisa SC"],
     "Spezia":           ["Spezia Calcio"],
     "Palermo":          ["US Città di Palermo", "Palermo FC"],
-    # Uwaga: Sassuolo B i Sampdoria B celowo pominięte – mają identyczne aliasy
-    # jak drużyny Serie A ("US Sassuolo", "UC Sampdoria"). Przy zjeździe do Serie B
-    # fuzzy matching poprawnie dopasuje do drużyny macierzystej, co jest pożądane
-    # (brak danych treningowych dla Serie B – używamy historii z Serie A).
+    # Sassuolo B / Sampdoria B: celowo pominięte — mają identyczne aliasy
+    # jak drużyny Serie A. Fuzzy matching poprawnie dopasuje do Serie A.
     "Bari":             ["SSC Bari"],
     "Brescia":          ["Brescia Calcio"],
     "Catanzaro":        ["US Catanzaro"],
@@ -222,26 +218,22 @@ TEAM_MAP: dict[str, list[str]] = {
     "Reggiana":         ["AC Reggiana"],
 }
 
-# ── Wewnętrzny słownik odwrotny (wartość → klucz) ────────────────────────────
+# ── Słownik odwrotny (alias → fd_name) ───────────────────────────────────────
 _REVERSE: dict[str, str] = {}
 for _fd_name, _aliases in TEAM_MAP.items():
-    _REVERSE[_fd_name.lower()] = _fd_name  # fd_name też mapuje sam na siebie
+    _REVERSE[_fd_name.lower()] = _fd_name
     for _alias in _aliases:
         _REVERSE[_alias.lower()] = _fd_name
 
-# ── Cache dla fuzzy match ────────────────────────────────────────────────────
+# ── Cache fuzzy match ─────────────────────────────────────────────────────────
 _FUZZY_CACHE: dict[str, str | None] = {}
-
-# Wszystkie znane nazwy fd (lewy słupek mapowania)
 _ALL_FD_NAMES: list[str] = list(TEAM_MAP.keys())
 
 
 def _fuzzy_match(name: str, threshold: int = 80) -> str | None:
     """
-    Próbuje dopasować `name` do jednej z znanych nazw fd-name przy użyciu
-    rapidfuzz. Wymaga zainstalowanej biblioteki rapidfuzz (requirements.txt).
-
-    Zwraca dopasowaną fd-name lub None jeśli score < threshold.
+    Próbuje dopasować name do znanych fd-names używając rapidfuzz.
+    Zwraca fd-name lub None jeśli score < threshold.
     """
     if name in _FUZZY_CACHE:
         return _FUZZY_CACHE[name]
@@ -253,9 +245,8 @@ def _fuzzy_match(name: str, threshold: int = 80) -> str | None:
         _FUZZY_CACHE[name] = None
         return None
 
-    # Szukaj w fd_names ORAZ aliasach (spłaszczone do jednej listy)
     all_names = list(_REVERSE.keys())
-    result = process.extractOne(
+    result    = process.extractOne(
         name.lower(),
         all_names,
         scorer=fuzz.token_sort_ratio,
@@ -265,30 +256,34 @@ def _fuzzy_match(name: str, threshold: int = 80) -> str | None:
         _FUZZY_CACHE[name] = None
         return None
 
-    matched_lower = result[0]
-    fd_name = _REVERSE.get(matched_lower)
-    _FUZZY_CACHE[name] = fd_name
+    fd_name                = _REVERSE.get(result[0])
+    _FUZZY_CACHE[name]     = fd_name
     return fd_name
 
 
-def normalize(name: str, source: str = "unknown") -> str:
+def normalize(name: str | None, source: str = "unknown") -> str:
     """
     Normalizuje nazwę drużyny do standardowej formy z football-data.co.uk.
 
+    v1.5: guard na None/pusty string — zwraca "" zamiast rzucać AttributeError.
+    Chroni przed crashem gdy The Odds API zwróci null dla nazwy drużyny.
+
     Przepływ:
-      1. Szukaj w ręcznym słowniku (dokładne dopasowanie, case-insensitive)
-      2. Jeśli nie znaleziono – próbuj fuzzy match (rapidfuzz)
-      3. Jeśli nadal nie znaleziono – zwróć oryginalną nazwę i zaloguj ostrzeżenie
+      1. Guard na None/pusty string
+      2. Dokładne dopasowanie (case-insensitive)
+      3. Fuzzy match (rapidfuzz, threshold=80)
+      4. Oryginalna nazwa + ostrzeżenie w logach
 
     Parametry
     ---------
-    name   : nazwa drużyny do znormalizowania
+    name   : nazwa drużyny do znormalizowania (może być None)
     source : skąd pochodzi nazwa (do lepszych logów)
-
-    Zwraca
-    ------
-    Znormalizowana nazwa (fd-name) lub oryginalna nazwa przy braku dopasowania.
     """
+    # Guard: None lub pusty string
+    if not name:
+        log.warning(f"normalize() otrzymał pustą/None nazwę [{source}] – zwracam ''")
+        return ""
+
     key = name.strip().lower()
 
     # 1. Dokładne dopasowanie
@@ -307,14 +302,11 @@ def normalize(name: str, source: str = "unknown") -> str:
     # 3. Brak dopasowania
     log.warning(
         f"Brak mapowania [{source}]: '{name}'. "
-        f"Dodaj do pipeline/name_mapping.py → TEAM_MAP"
+        "Dodaj do pipeline/name_mapping.py → TEAM_MAP"
     )
     return name
 
 
-def normalize_batch(
-    names: list[str],
-    source: str = "unknown",
-) -> list[str]:
+def normalize_batch(names: list[str], source: str = "unknown") -> list[str]:
     """Normalizuje listę nazw drużyn naraz."""
     return [normalize(n, source) for n in names]
