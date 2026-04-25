@@ -12,8 +12,7 @@ Użycie:
         url="https://api.example.com/endpoint",
         keys=config.ODDS_API_KEYS,
         params={"param": "value"},
-        key_param="apiKey",           # nazwa parametru URL z kluczem
-        key_header=None,              # lub nazwa nagłówka HTTP z kluczem
+        key_param="apiKey",     # nazwa parametru URL z kluczem
     )
 """
 import logging
@@ -24,7 +23,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# Kody HTTP które oznaczają wyczerpanie limitu – przełącz na kolejny klucz
+# Kody HTTP które oznaczają wyczerpanie limitu — przełącz na kolejny klucz
 _QUOTA_ERRORS = {401, 402, 403, 429}
 
 
@@ -59,15 +58,14 @@ def api_get(
     """
     if not keys:
         raise RuntimeError(
-            "Brak kluczy API. Sprawdź GitHub Secrets (ODDS_API_KEY / API_FOOTBALL_KEY)."
+            "Brak kluczy API. Sprawdź GitHub Secrets (ODDS_API_KEY)."
         )
 
-    params  = dict(params or {})
+    params  = dict(params  or {})
     headers = dict(headers or {})
     last_error: str = ""
 
     for idx, key in enumerate(keys, start=1):
-        # Wstaw klucz do odpowiedniego miejsca
         req_params  = {**params,  **(({key_param:  key} if key_param  else {}))}
         req_headers = {**headers, **(({key_header: key} if key_header else {}))}
 
@@ -85,8 +83,6 @@ def api_get(
             continue
 
         if resp.status_code == 200:
-            # The Odds API:  x-requests-remaining
-            # api-sports.io: x-ratelimit-requests-remaining
             remaining = (
                 resp.headers.get("x-requests-remaining")
                 or resp.headers.get("x-ratelimit-requests-remaining")
@@ -105,11 +101,10 @@ def api_get(
             time.sleep(retry_wait)
             continue
 
-        # Inny błąd HTTP – nie próbuj kolejnego klucza, od razu zgłoś
         resp.raise_for_status()
 
     raise RuntimeError(
         f"Wszystkie {len(keys)} klucze API wyczerpane lub błędne. "
         f"Ostatni błąd: {last_error}. "
-        f"Sprawdź limity kont lub dodaj ODDS_API_KEY_2 / API_FOOTBALL_KEY_2 w GitHub Secrets."
+        f"Sprawdź limity kont lub dodaj ODDS_API_KEY_2/3 w GitHub Secrets."
     )
