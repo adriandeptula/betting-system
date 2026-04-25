@@ -3,18 +3,21 @@ model/evaluate.py
 Automatyczne rozliczanie kuponów i śledzenie ROI.
 
 Dwa niezależne systemy:
-  1. Model ROI  – mierzy jakość modelu niezależnie od gracza.
-                  Kupony rozliczane automatycznie przez The Odds API /scores.
-                  Podstawa: coupons_history.json (sugerowane stawki Kelly).
+  Model ROI  – mierzy jakość modelu niezależnie od gracza.
+               Kupony rozliczane automatycznie przez The Odds API /scores.
+               Stawki per kupon śledzone dokładnie (nie przez proporcję).
 
-  2. Player ROI – mierzy rzeczywisty P&L gracza.
-                  Stawki: /stake [nr_kuponu] [kwota]  (osobno na każdy kupon)
-                  Wypłaty: /won [nr_kuponu] [kwota]   (gracz podaje rzeczywistą wypłatę)
-                  Podstawa: finance.json (rzeczywiste transakcje per kupon).
+  Player ROI – mierzy rzeczywisty P&L gracza.
+               Stawki: /stake [nr] [kwota]  (osobno na każdy kupon)
+               Wypłaty: /won [nr] [kwota]   (gracz podaje rzeczywistą wypłatę)
+               Podstawa: finance.json
 
-Przepływ:
-  weekly_retrain (poniedziałek) → auto_resolve_pending_coupons() → update_coupon_results()
-  bot_polling (co godzinę)      → auto_resolve_pending_coupons() (szybko wraca gdy brak PENDING)
+v1.5 poprawki:
+  - update_coupon_results(): ROI liczony na stawkach WON+LOST (nie proporcja całości)
+    Poprzednio: staked_resolved = total_staked * (resolved/total) — błąd przy
+    różnych stawkach Kelly. Teraz: każdy kupon śledzi stawkę per status.
+  - auto_resolve_pending_coupons(): dynamiczny days_back (max 14) zamiast
+    hardcoded 7 — kupony nie gną przy >7 dniach przerwy Actions.
 """
 import json
 import logging
@@ -35,7 +38,7 @@ def fetch_results(league_key: str, days_back: int = 7) -> list:
         return []
 
     from pipeline.api_utils import api_get
-    url = f"{ODDS_API_BASE}/sports/{league_key}/scores"
+    url    = f"{ODDS_API_BASE}/sports/{league_key}/scores"
     params = {"daysFrom": days_back, "dateFormat": "iso"}
     try:
         data, _ = api_get(url=url, keys=ODDS_API_KEYS, params=params, key_param="apiKey")
@@ -48,7 +51,6 @@ def fetch_results(league_key: str, days_back: int = 7) -> list:
 # ── Logika rozliczania ────────────────────────────────────────────────────────
 
 def _determine_ftr(home_score: int, away_score: int) -> str:
-    """Wyznacza wynik (H/D/A) na podstawie liczby goli."""
     if home_score > away_score:
         return "H"
     if home_score == away_score:
@@ -57,7 +59,6 @@ def _determine_ftr(home_score: int, away_score: int) -> str:
 
 
 def _leg_won(ftr: str, bet_outcome: str) -> bool:
-    """Sprawdza czy noga kuponu wygrała."""
     mapping = {
         "H":  ftr == "H",
         "D":  ftr == "D",
@@ -69,27 +70,24 @@ def _leg_won(ftr: str, bet_outcome: str) -> bool:
     return mapping.get(bet_outcome, False)
 
 
-def _build_result_lookups(league_keys: set) -> tuple[dict, dict]:
+def _build_result_lookups(league_keys: set, days_back: int) -> tuple[dict, dict]:
     """
     Pobiera wyniki dla podanych lig i buduje dwa słowniki wyszukiwania:
       results_by_id    : {match_id: ftr}
       results_by_teams : {(home_norm_lower, away_norm_lower): ftr}
-
-    Dwa indeksy dla niezawodności – match_id może się różnić między API calls
-    gdy np. event był aktualizowany, stąd fallback po nazwach drużyn.
     """
     from pipeline.name_mapping import normalize
 
-    results_by_id: dict[str, str]                = {}
-    results_by_teams: dict[tuple[str, str], str] = {}
+    results_by_id:    dict[str, str]                = {}
+    results_by_teams: dict[tuple[str, str], str]    = {}
 
     for odds_key in league_keys:
-        scores = fetch_results(odds_key, days_back=7)
+        scores = fetch_results(odds_key, days_back=days_back)
         for score in scores:
             if not score.get("completed", False):
                 continue
 
-            raw_scores = score.get("scores") or []
+            raw_scores  = score.get("scores") or []
             scores_dict: dict[str, int] = {}
             for s in raw_scores:
                 try:
@@ -100,8 +98,8 @@ def _build_result_lookups(league_keys: set) -> tuple[dict, dict]:
             if len(scores_dict) < 2:
                 continue
 
-            home_raw  = score.get("home_team", "")
-            away_raw  = score.get("away_team", "")
+            home_raw   = score.get("home_team", "")
+            away_raw   = score.get("away_team", "")
             home_score = scores_dict.get(home_raw, -1)
             away_score = scores_dict.get(away_raw, -1)
 
@@ -134,9 +132,9 @@ def _resolve_coupon_status(
     Wyznacza aktualny status kuponu na podstawie wyników.
     Zwraca: 'WON' | 'LOST' | 'PENDING'
 
-    Parlay (akumulator) wygrywa gdy WSZYSTKIE nogi wygrały.
-    Parlay przegrywa gdy JAKAKOLWIEK noga przegrała (i wynik jest znany).
-    Pozostaje PENDING jeśli którakolwiek noga jeszcze nie ma wyniku.
+    Parlay wygrywa gdy WSZYSTKIE nogi wygrały.
+    Parlay przegrywa gdy JAKAKOLWIEK noga przegrała (wynik znany).
+    Pozostaje PENDING jeśli którakolwiek noga nie ma jeszcze wyniku.
     """
     legs = coupon.get("legs", [])
     if not legs:
@@ -150,7 +148,6 @@ def _resolve_coupon_status(
         home_norm   = leg.get("home_team", "").lower()
         away_norm   = leg.get("away_team", "").lower()
 
-        # Szukaj wyniku: najpierw po match_id, potem po znormalizowanych nazwach
         ftr = results_by_id.get(match_id) or results_by_teams.get(
             (home_norm, away_norm)
         )
@@ -170,13 +167,40 @@ def _resolve_coupon_status(
 
 # ── Auto-rozliczanie ──────────────────────────────────────────────────────────
 
+def _compute_dynamic_days_back(history: list, max_days: int = 14) -> int:
+    """
+    Oblicza ile dni wstecz szukać wyników, zależnie od wieku najstarszego
+    PENDING kuponu. Chroni przed sytuacją gdy Actions nie działało przez >7 dni.
+    """
+    oldest: datetime | None = None
+    for entry in history:
+        for coupon in entry.get("coupons", []):
+            if coupon.get("result", "PENDING") != "PENDING":
+                continue
+            try:
+                d = datetime.fromisoformat(entry.get("date", "")[:16])
+                if oldest is None or d < oldest:
+                    oldest = d
+            except ValueError:
+                continue
+
+    if oldest is None:
+        return 7
+
+    days_since = (datetime.now() - oldest).days + 2   # +2 dni buforu
+    return min(max_days, max(7, days_since))
+
+
 def auto_resolve_pending_coupons() -> int:
     """
     Pobiera wyniki z The Odds API i automatycznie rozlicza PENDING kupony.
 
     Wywoływana:
       - w run_stats() (weekly_retrain, poniedziałek)
-      - w poll_and_respond() (bot_polling, co godzinę) gdy są PENDING kupony
+      - w poll_and_respond() (bot_polling, co godzinę)
+
+    days_back obliczany dynamicznie na podstawie wieku najstarszego PENDING
+    kuponu — gwarantuje rozliczenie nawet po dłuższej przerwie Actions.
 
     Zwraca liczbę nowo rozliczonych kuponów.
     """
@@ -187,9 +211,8 @@ def auto_resolve_pending_coupons() -> int:
     with open(history_path, encoding="utf-8") as f:
         history = json.load(f)
 
-    # Zbierz PENDING kupony i ligi których potrzebujemy
     pending_coupons: list[dict] = []
-    league_keys: set[str] = set()
+    league_keys:     set[str]   = set()
 
     for entry in history:
         for coupon in entry.get("coupons", []):
@@ -204,9 +227,10 @@ def auto_resolve_pending_coupons() -> int:
         log.info("Brak PENDING kuponów – pomijam auto-resolve.")
         return 0
 
+    days_back = _compute_dynamic_days_back(history)
     log.info(
         f"Auto-resolve: {len(pending_coupons)} PENDING kuponów, "
-        f"{len(league_keys)} lig do sprawdzenia"
+        f"{len(league_keys)} lig, days_back={days_back}"
     )
 
     if not ODDS_API_KEYS:
@@ -216,7 +240,7 @@ def auto_resolve_pending_coupons() -> int:
         )
         return 0
 
-    results_by_id, results_by_teams = _build_result_lookups(league_keys)
+    results_by_id, results_by_teams = _build_result_lookups(league_keys, days_back)
 
     if not results_by_id and not results_by_teams:
         log.warning("Nie pobrano żadnych wyników – API może być niedostępne.")
@@ -235,7 +259,7 @@ def auto_resolve_pending_coupons() -> int:
                 log.info(
                     f"  [{new_status}] {coupon.get('type','?')} "
                     f"@ {coupon.get('total_odds', '?')} "
-                    f"(sugerowana stawka Kelly: {coupon.get('stake', '?')} PLN)"
+                    f"(stawka Kelly: {coupon.get('stake', '?')} PLN)"
                 )
 
     with open(history_path, "w", encoding="utf-8") as f:
@@ -251,13 +275,14 @@ def update_coupon_results() -> dict:
     """
     Rozlicza kupony i oblicza Model ROI.
 
-    Model ROI używa SUGEROWANYCH stawek Kelly z coupons_history.json
-    i jest NIEZALEŻNY od tego czy gracz faktycznie postawił.
-    Mierzy wyłącznie jakość modelu.
+    POPRAWKA v1.5: ROI liczony na rzeczywistych stawkach WON i LOST kuponów
+    (nie przez proporcję całości). Przy różnych stawkach Kelly poprzednie
+    podejście (total_staked * resolved/total) było matematycznie błędne.
 
-    Dla Player ROI (rzeczywistego P&L gracza) użyj notify.finance.get_summary().
+    Model ROI ≠ Player ROI.
+    Model ROI używa sugerowanych stawek Kelly z coupons_history.json.
+    Player ROI (finance.py) używa rzeczywistych stawek gracza.
     """
-    # Najpierw spróbuj auto-rozliczyć PENDING
     auto_resolve_pending_coupons()
 
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
@@ -274,32 +299,31 @@ def update_coupon_results() -> dict:
         for coupon in entry.get("coupons", []):
             stats["total_coupons"] += 1
             model_stake = float(coupon.get("stake", 0))
-            stats["total_model_staked"] += model_stake
-            result = coupon.get("result", "PENDING")
+            result      = coupon.get("result", "PENDING")
 
             if result == "WON":
-                stats["won"] += 1
-                payout = model_stake * float(coupon.get("total_odds", 1))
-                stats["total_model_return"] += payout
+                stats["won"]               += 1
+                stats["staked_resolved"]   += model_stake
+                stats["total_model_return"] += model_stake * float(coupon.get("total_odds", 1))
             elif result == "LOST":
-                stats["lost"] += 1
+                stats["lost"]             += 1
+                stats["staked_resolved"]  += model_stake
             else:
                 stats["pending"] += 1
 
-    resolved = stats["won"] + stats["lost"]
-    if resolved > 0 and stats["total_model_staked"] > 0:
-        resolved_frac   = resolved / stats["total_coupons"]
-        staked_resolved = stats["total_model_staked"] * resolved_frac
+    if stats["staked_resolved"] > 0:
         stats["model_roi"] = (
-            (stats["total_model_return"] - staked_resolved) / staked_resolved * 100
-            if staked_resolved > 0 else 0.0
+            (stats["total_model_return"] - stats["staked_resolved"])
+            / stats["staked_resolved"] * 100
         )
 
     log.info("─── MODEL ROI (sugerowane stawki Kelly) ─────────")
-    log.info(f"Łącznie kuponów: {stats['total_coupons']}")
+    log.info(f"Łącznie kuponów:  {stats['total_coupons']}")
     log.info(f"  WON:     {stats['won']}")
     log.info(f"  LOST:    {stats['lost']}")
     log.info(f"  PENDING: {stats['pending']}")
+    log.info(f"  Postawiono (rozliczone): {stats['staked_resolved']:.0f} PLN")
+    log.info(f"  Zwrot (WON):             {stats['total_model_return']:.0f} PLN")
     log.info(f"Model ROI: {stats['model_roi']:.1f}%")
     log.info("─────────────────────────────────────────────────")
 
@@ -318,7 +342,7 @@ def _empty_stats() -> dict:
         "won":                0,
         "lost":               0,
         "pending":            0,
-        "total_model_staked": 0.0,
+        "staked_resolved":    0.0,   # stawki tylko WON + LOST
         "total_model_return": 0.0,
         "model_roi":          0.0,
     }
@@ -329,10 +353,7 @@ def _empty_stats() -> dict:
 def get_pending_summary() -> dict:
     """
     Zwraca podsumowanie PENDING kuponów z ich numerami.
-    Numery kuponów używane przez gracza w komendach /stake i /won.
-
-    Format numeru kuponu: sekwencyjny indeks w historii (1, 2, 3...) –
-    wyświetlany przy każdym wysłaniu kuponu na Telegram.
+    Numery kuponów: sekwencyjny indeks w historii (1, 2, 3...).
     """
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
     if not history_path.exists():
@@ -346,7 +367,6 @@ def get_pending_summary() -> dict:
     potential_return = 0.0
     legs_summary     = []
 
-    # Globalny licznik kuponów – ten sam co nadawany przy wysyłaniu
     global_idx = 0
     for entry in history:
         for coupon in entry.get("coupons", []):
@@ -354,16 +374,16 @@ def get_pending_summary() -> dict:
             if coupon.get("result", "PENDING") != "PENDING":
                 continue
 
-            count += 1
-            stake = float(coupon.get("stake", 0))
-            odds  = float(coupon.get("total_odds", 1.0))
+            count        += 1
+            stake         = float(coupon.get("stake", 0))
+            odds          = float(coupon.get("total_odds", 1.0))
             total_staked     += stake
             potential_return += stake * odds
 
             date_str    = entry.get("date", "?")[:10]
             coupon_type = coupon.get("type", "?")
             legs        = coupon.get("legs", [])
-            teams = " + ".join(
+            teams       = " + ".join(
                 f"{l.get('home_team','?')[:12]} vs {l.get('away_team','?')[:12]}"
                 for l in legs
             )
