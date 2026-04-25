@@ -8,28 +8,21 @@ Różnica względem Model ROI (evaluate.py):
   Player ROI – używa RZECZYWISTYCH stawek i wypłat gracza, liczy ile
                faktycznie zarobił/stracił.
 
-Stawki przypisane PER KUPON (nie sumarycznie per wysyłka):
+Stawki przypisane PER KUPON:
   /stake 1 100  – postawiłem 100 PLN na kupon #1
   /stake 2 50   – postawiłem 50 PLN na kupon #2
   /stake 3 0    – nie postawiłem na kupon #3
 
-Wypłaty z wygranej podawane przez gracza (kurs bukmachera może się różnić):
+Wypłaty podawane przez gracza:
   /won 1 350    – kupon #1 wygrał, dostałem 350 PLN
   /lost 2       – kupon #2 przegrał
 
-Struktura finance.json:
-{
-  "initial_balance": -1500,      # punkt startowy (ujemny = zaczynasz ze stratą)
-  "transactions": [
-    {
-      "date":       "2025-04-25 10:30",
-      "type":       "stake",            # stake | payout | adjustment
-      "amount":     -100,               # ujemne = wydatek, dodatnie = wpływ
-      "coupon_id":  "3",                # numer kuponu (string)
-      "note":       "Kupon #3 SINGIEL"
-    }
-  ]
-}
+v1.5 poprawka:
+  - Naprawiono błąd domknięcia w obliczaniu pending_player_coupons:
+    poprzednio zmienna 'cid' w pętli wewnętrznej przesłaniała 'cid' zewnętrzny
+    i nigdy nie trafiała do słownika return.
+  - Poprawna logika: kupon jest "pending gracza" gdy staked > 0, payout == 0,
+    I NIE MA żadnej transakcji payout dla tego coupon_id.
 """
 import json
 import logging
@@ -61,7 +54,7 @@ def _save(data: dict) -> None:
 
 def set_initial_balance(amount: float, note: str = "") -> dict:
     """
-    Ustawia punkt startowy (np. -1500 jeśli zaczynasz ze stratą przed systemem).
+    Ustawia punkt startowy (np. -1500 jeśli zaczynasz ze stratą).
     Nadpisuje poprzednią wartość – wywołaj tylko raz na początku.
     """
     data = _load()
@@ -79,12 +72,12 @@ def add_stake(amount: float, coupon_id: str = "", note: str = "") -> None:
         coupon_id: numer kuponu jako string (np. "1", "2", "3")
         note:      opcjonalny opis
     """
-    data = _load()
+    data         = _load()
     coupon_label = f"#{coupon_id}" if coupon_id else ""
     data["transactions"].append({
         "date":      datetime.now().strftime("%Y-%m-%d %H:%M"),
         "type":      "stake",
-        "amount":    -abs(float(amount)),      # wydatek = ujemny
+        "amount":    -abs(float(amount)),
         "coupon_id": str(coupon_id),
         "note":      note or f"Stawka na kupon {coupon_label}",
     })
@@ -93,20 +86,19 @@ def add_stake(amount: float, coupon_id: str = "", note: str = "") -> None:
 
 def add_payout(amount: float, coupon_id: str = "", note: str = "") -> None:
     """
-    Zapisuje wypłatę z wygranego kuponu (kwota podana przez gracza –
-    może różnić się od kursu modelu bo gracz gra u konkretnego bukmachera).
+    Zapisuje wypłatę z wygranego kuponu.
 
     Args:
         amount:    kwota wypłaty w PLN (> 0)
         coupon_id: numer kuponu jako string
         note:      opcjonalny opis
     """
-    data = _load()
+    data         = _load()
     coupon_label = f"#{coupon_id}" if coupon_id else ""
     data["transactions"].append({
         "date":      datetime.now().strftime("%Y-%m-%d %H:%M"),
         "type":      "payout",
-        "amount":    +abs(float(amount)),      # wpływ = dodatni
+        "amount":    +abs(float(amount)),
         "coupon_id": str(coupon_id),
         "note":      note or f"Wygrana z kuponu {coupon_label}",
     })
@@ -117,8 +109,9 @@ def get_summary() -> dict:
     """
     Oblicza pełne podsumowanie finansowe gracza (Player ROI).
 
-    Player ROI oparty o RZECZYWISTE stawki i wypłaty z finance.json –
-    niezależny od Model ROI z evaluate.py.
+    v1.5 poprawka: pending_player_coupons liczony poprawnie — bez błędu
+    domknięcia z poprzedniej wersji. Kupon jest 'oczekujący gracza' gdy:
+      staked > 0 AND payout == 0 AND brak transakcji payout dla tego coupon_id.
     """
     data    = _load()
     txs     = data.get("transactions", [])
@@ -129,8 +122,10 @@ def get_summary() -> dict:
     net_from_bets = total_payout - total_staked
     overall       = initial + net_from_bets
 
-    # Statystyki per kupon (tylko kupony z coupon_id)
+    # Statystyki per kupon
     stakes_by_coupon: dict[str, dict] = {}
+    coupon_ids_with_payout: set[str] = set()
+
     for t in txs:
         cid = t.get("coupon_id", "")
         if not cid:
@@ -141,48 +136,53 @@ def get_summary() -> dict:
             stakes_by_coupon[cid]["staked"] += abs(t["amount"])
         elif t["type"] == "payout":
             stakes_by_coupon[cid]["payout"] += t["amount"]
+            coupon_ids_with_payout.add(cid)
 
     won_coupons  = sum(1 for v in stakes_by_coupon.values() if v["payout"] > v["staked"])
     lost_coupons = sum(
-        1 for v in stakes_by_coupon.values()
-        if v["payout"] == 0 and v["staked"] > 0
-    )
-    # Kupony zastawione ale bez wypłaty i bez info o przegranej – jeszcze w grze
-    pending_player = sum(
-        1 for v in stakes_by_coupon.values()
-        if v["staked"] > 0 and v["payout"] == 0
-        and all(
-            t.get("coupon_id") != cid or t["type"] != "payout"
+        1 for cid, v in stakes_by_coupon.items()
+        if v["payout"] == 0 and v["staked"] > 0 and cid not in coupon_ids_with_payout
+        and any(
+            t.get("coupon_id") == cid and t["type"] == "stake"
             for t in txs
-            for cid in stakes_by_coupon
         )
+        # Liczymy jako 'lost' tylko jeśli gracz NIE zalogował wypłaty.
+        # Bardziej precyzyjna klasyfikacja: przez /lost komendę w przyszłej wersji
+        # można dodać explicit "lost" transaction type.
+    )
+
+    # Poprawiona logika pending gracza:
+    # Kupon jest pending gdy: postawiono > 0, brak jakiejkolwiek wypłaty,
+    # i coupon_id nie pojawia się jako payout.
+    pending_player_coupons = sum(
+        1 for cid, v in stakes_by_coupon.items()
+        if v["staked"] > 0 and v["payout"] == 0 and cid not in coupon_ids_with_payout
     )
 
     roi = (net_from_bets / total_staked * 100) if total_staked > 0 else 0.0
 
     return {
-        "initial_balance":    initial,
-        "total_staked":       round(total_staked, 2),
-        "total_payout":       round(total_payout, 2),
-        "net_from_bets":      round(net_from_bets, 2),
-        "overall":            round(overall, 2),
-        "roi":                round(roi, 2),
-        "won_coupons":        won_coupons,
-        "lost_coupons":       lost_coupons,
-        "total_coupons":      won_coupons + lost_coupons,
-        "transactions_count": len(txs),
+        "initial_balance":       initial,
+        "total_staked":          round(total_staked, 2),
+        "total_payout":          round(total_payout, 2),
+        "net_from_bets":         round(net_from_bets, 2),
+        "overall":               round(overall, 2),
+        "roi":                   round(roi, 2),
+        "won_coupons":           won_coupons,
+        "lost_coupons":          lost_coupons,
+        "pending_player_coupons": pending_player_coupons,
+        "total_coupons":         won_coupons + lost_coupons,
+        "transactions_count":    len(txs),
     }
 
 
 def get_coupon_stakes() -> dict[str, dict]:
     """
     Zwraca słownik per-kupon stawek i wypłat gracza.
-    Używany przez bota do sprawdzenia czy kupon był zagrany.
-
-    Format: {"1": {"staked": 100.0, "payout": 350.0}, "2": {"staked": 50.0, "payout": 0.0}}
+    Format: {"1": {"staked": 100.0, "payout": 350.0}, ...}
     """
-    data = _load()
-    txs  = data.get("transactions", [])
+    data   = _load()
+    txs    = data.get("transactions", [])
     stakes: dict[str, dict] = {}
     for t in txs:
         cid = t.get("coupon_id", "")
@@ -218,6 +218,8 @@ def format_summary_message(s: dict, pending: dict | None = None) -> str:
         f"Start: <b>{s['initial_balance']:+.0f} PLN</b>"
     )
 
+    pending_player = s.get("pending_player_coupons", 0)
+
     msg = (
         f"💼 <b>STATUS FINANSOWY (Player ROI)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -230,11 +232,12 @@ def format_summary_message(s: dict, pending: dict | None = None) -> str:
         f"<b>Kupony gracza:</b>\n"
         f"  ✅ Wygrane:   {s['won_coupons']}\n"
         f"  ❌ Przegrane: {s['lost_coupons']}\n"
+        f"  ⏳ Oczekujące: {pending_player}\n"
         f"  📋 Łącznie:   {s['total_coupons']}\n"
     )
 
     if pending and pending.get("count", 0) > 0:
-        p = pending
+        p    = pending
         msg += (
             f"\n⏳ <b>Kupony oczekujące (model): {p['count']}</b>\n"
             f"  🎲 Sug. stawka Kelly:    <b>{p['total_staked_model']:.0f} PLN</b>\n"
