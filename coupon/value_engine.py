@@ -5,7 +5,7 @@ szansę wygranej niż sugeruje kurs bukmachera.
 
 Value bet: model_prob > market_prob + MIN_EDGE
 
-v1.2: double chance markets (1X, X2, 12) wyprowadzane z kursów h2h.
+Double chance (1X, X2, 12) wyprowadzane z kursów h2h:
   Nie wymagają dodatkowych requestów do The Odds API.
   Kursy i prawdopodobieństwa rynkowe liczone ze znormalizowanych h2h.
   Osobny zakres kursów: DC_MIN_ODDS / DC_MAX_ODDS (niższy niż 1X2).
@@ -53,68 +53,68 @@ def find_value_bets(predictions: list) -> list:
         # ── Kandydaci 1X2 ────────────────────────────────────────────────────
         candidates_1x2 = [
             {
-                "outcome":    "H",
-                "label":      "Wygrana gospodarza",
-                "model_prob": match["prob_home"],
+                "outcome":     "H",
+                "label":       "Wygrana gospodarza",
+                "model_prob":  match["prob_home"],
                 "market_prob": mh,
-                "odds":       match["odds_home"],
-                "min_odds":   MIN_ODDS,
-                "max_odds":   MAX_ODDS,
-                "min_prob":   MIN_MODEL_PROB,
+                "odds":        match["odds_home"],
+                "min_odds":    MIN_ODDS,
+                "max_odds":    MAX_ODDS,
+                "min_prob":    MIN_MODEL_PROB,
             },
             {
-                "outcome":    "D",
-                "label":      "Remis",
-                "model_prob": match["prob_draw"],
+                "outcome":     "D",
+                "label":       "Remis",
+                "model_prob":  match["prob_draw"],
                 "market_prob": md,
-                "odds":       match["odds_draw"],
-                "min_odds":   MIN_ODDS,
-                "max_odds":   MAX_ODDS,
-                "min_prob":   MIN_MODEL_PROB,
+                "odds":        match["odds_draw"],
+                "min_odds":    MIN_ODDS,
+                "max_odds":    MAX_ODDS,
+                "min_prob":    MIN_MODEL_PROB,
             },
             {
-                "outcome":    "A",
-                "label":      "Wygrana gościa",
-                "model_prob": match["prob_away"],
+                "outcome":     "A",
+                "label":       "Wygrana gościa",
+                "model_prob":  match["prob_away"],
                 "market_prob": ma,
-                "odds":       match["odds_away"],
-                "min_odds":   MIN_ODDS,
-                "max_odds":   MAX_ODDS,
-                "min_prob":   MIN_MODEL_PROB,
+                "odds":        match["odds_away"],
+                "min_odds":    MIN_ODDS,
+                "max_odds":    MAX_ODDS,
+                "min_prob":    MIN_MODEL_PROB,
             },
         ]
 
-        # ── Kandydaci double chance (wyprowadzone z h2h, 0 dodatkowych req) ──
+        # ── Kandydaci double chance (0 dodatkowych requestów API) ─────────────
         candidates_dc = [
             {
-                "outcome":    "1X",
-                "label":      "Gospodarz lub remis",
-                "model_prob": match["prob_home"] + match["prob_draw"],
+                "outcome":     "1X",
+                "label":       "Gospodarz lub remis",
+                "model_prob":  match["prob_home"] + match["prob_draw"],
                 "market_prob": mh + md,
-                "odds":       _dc_odds(mh + md),
-                "min_odds":   DC_MIN_ODDS,
-                "max_odds":   DC_MAX_ODDS,
-                "min_prob":   DC_MIN_MODEL_PROB,
+                "odds":        _dc_odds(mh + md),
+                "min_odds":    DC_MIN_ODDS,
+                "max_odds":    DC_MAX_ODDS,
+                "min_prob":    DC_MIN_MODEL_PROB,
             },
             {
-                "outcome":    "X2",
-                "label":      "Remis lub gość",
-                "model_prob": match["prob_draw"] + match["prob_away"],
+                "outcome":     "X2",
+                "label":       "Remis lub gość",
+                "model_prob":  match["prob_draw"] + match["prob_away"],
                 "market_prob": md + ma,
-                "odds":       _dc_odds(md + ma),
-                "min_odds":   DC_MIN_ODDS,
-                "max_odds":   DC_MAX_ODDS,
-                "min_prob":   DC_MIN_MODEL_PROB,
+                "odds":        _dc_odds(md + ma),
+                "min_odds":    DC_MIN_ODDS,
+                "max_odds":    DC_MAX_ODDS,
+                "min_prob":    DC_MIN_MODEL_PROB,
             },
             {
-                "outcome":    "12",
-                "label":      "Gospodarz lub gość (bez remisu)",
-                "model_prob": match["prob_home"] + match["prob_away"],
+                "outcome":     "12",
+                "label":       "Gospodarz lub gość (bez remisu)",
+                "model_prob":  match["prob_home"] + match["prob_away"],
                 "market_prob": mh + ma,
-                "odds":       _dc_odds(mh + ma),
-                "min_odds":   DC_MIN_ODDS,
-                "max_odds":   DC_MAX_ODDS,
-                "min_prob":   DC_MIN_MODEL_PROB,
+                "odds":        _dc_odds(mh + ma),
+                "min_odds":    DC_MIN_ODDS,
+                "max_odds":    DC_MAX_ODDS,
+                "min_prob":    DC_MIN_MODEL_PROB,
             },
         ]
 
@@ -122,17 +122,16 @@ def find_value_bets(predictions: list) -> list:
             edge = c["model_prob"] - c["market_prob"]
             odds = c["odds"]
 
-            # ── Filtry jakości ────────────────────────────────────────────────
             if edge < MIN_EDGE:
-                continue                          # Zbyt mały edge
+                continue
             if odds <= 0 or odds < c["min_odds"] or odds > c["max_odds"]:
-                continue                          # Poza zakresem kursów
+                continue
             if c["model_prob"] < c["min_prob"]:
-                continue                          # Za mała pewność modelu
+                continue
             if c["market_prob"] <= 0:
-                continue                          # Brak danych rynkowych
+                continue
 
-            ev = (c["model_prob"] * odds) - 1.0  # Expected Value
+            ev = (c["model_prob"] * odds) - 1.0
 
             vb = {
                 **match,
@@ -153,8 +152,6 @@ def find_value_bets(predictions: list) -> list:
                 f"edge=+{edge:.1%} EV=+{ev:.1%}"
             )
 
-    # Sortuj: najpierw największy edge
     value_bets.sort(key=lambda x: x["edge"], reverse=True)
-
     log.info(f"Znaleziono {len(value_bets)} value betów z {len(predictions)} meczów")
     return value_bets
