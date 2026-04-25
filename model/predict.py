@@ -43,6 +43,10 @@ def _best_odds(bookmakers: list, home_team: str, away_team: str) -> tuple[float,
     """
     Wyciąga najlepsze dostępne kursy 1X2 ze wszystkich bukmacherów.
     Zwraca (odds_h, odds_d, odds_a). Przy braku danych zwraca (2.0, 3.5, 4.0).
+
+    Uwaga: fallback 'else' przypisuje outcome do away gdy nazwa nie pasuje
+    ani do home_team ani do "Draw". Przy dobrym name_mapping to bezpieczne,
+    ale warto monitorować logi na "Brak mapowania".
     """
     best_h = best_d = best_a = 0.0
 
@@ -73,7 +77,7 @@ def _parse_odds_to_upcoming(events: list) -> list[dict]:
     przez compute_features_upcoming().
     """
     upcoming = []
-    now = datetime.now(timezone.utc)
+    now      = datetime.now(timezone.utc)
 
     for ev in events:
         commence_raw = ev.get("commence_time", "")
@@ -126,7 +130,7 @@ def predict_matches() -> list:
         return []
     model, feature_cols, league_codes = loaded
 
-    df_hist = pd.read_csv(f"{DATA_RAW}/all_matches.csv")
+    df_hist         = pd.read_csv(f"{DATA_RAW}/all_matches.csv")
     df_hist["Date"] = pd.to_datetime(df_hist["Date"], errors="coerce")
 
     events = load_latest_odds()
@@ -151,8 +155,8 @@ def predict_matches() -> list:
         if i >= len(proba):
             break
 
-        odds_h, odds_d, odds_a = match["odds_h"], match["odds_d"], match["odds_a"]
-        mkt_h, mkt_d, mkt_a   = remove_margin(odds_h, odds_d, odds_a)
+        odds_h, odds_d, odds_a   = match["odds_h"], match["odds_d"], match["odds_a"]
+        mkt_h, mkt_d, mkt_a     = remove_margin(odds_h, odds_d, odds_a)
 
         results.append({
             "match_id":         match["match_id"],
@@ -180,5 +184,5 @@ if __name__ == "__main__":
     for p in predict_matches()[:5]:
         print(
             f"{p['home_team']} vs {p['away_team']} | "
-            f"H: {p['prob_home']:.0%} D: {p['prob_draw']:.0%} A: {p['prob_away']:.0%}"
+            f"H: {p['prob_home']:.0%}  D: {p['prob_draw']:.0%}  A: {p['prob_away']:.0%}"
         )
