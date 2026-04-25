@@ -5,32 +5,30 @@ Metodologia: walk-forward (bez data leakage).
   Dla każdego meczu cechy liczone są TYLKO z danych historycznych
   (mecze które odbyły się PRZED datą tego meczu).
 
-Cechy (v1.3):
+Cechy (v1.5):
   Forma ważona czasowo (wykładniczy zanik, halflife=FORM_HALFLIFE_DAYS):
-    - home_pts_avg, away_pts_avg             – średnia punktów (3/1/0)
-    - home_gf_avg, away_gf_avg               – średnia goli strzelonych
-    - home_ga_avg, away_ga_avg               – średnia goli straconych
-    - home_hst_avg, away_hst_avg             – śr. strzałów celnych
-    - home_ast_avg, away_ast_avg             – śr. strzałów celnych przeciwnika
+    home_pts_avg, away_pts_avg   – średnia punktów (3/1/0)
+    home_gf_avg,  away_gf_avg    – średnia goli strzelonych
+    home_ga_avg,  away_ga_avg    – średnia goli straconych
+    home_hst_avg, away_hst_avg   – śr. strzałów celnych
+    home_ast_avg, away_ast_avg   – śr. strzałów celnych przeciwnika
 
   H2H (ostatnie 5 bezpośrednich meczów):
-    - h2h_home_win_rate                      – % wygranych drużyny domowej
-    - h2h_avg_goals                          – średnia goli w meczu
+    h2h_home_win_rate            – % wygranych drużyny domowej
+    h2h_avg_goals                – średnia goli w meczu
 
   Kursy rynkowe (fair, po usunięciu marży bukmachera):
-    - market_prob_h, market_prob_d, market_prob_a
+    market_prob_h, market_prob_d, market_prob_a
 
-  Elo rating [v1.3] (liczony walk-forward z pełnej historii):
-    - home_elo                               – rating Elo drużyny domowej
-    - away_elo                               – rating Elo drużyny gości
-    - elo_diff                               – różnica (home_elo - away_elo)
+  Elo rating per liga (v1.5: osobno na każdą ligę – brak cross-league contamination):
+    home_elo                     – rating Elo drużyny domowej
+    away_elo                     – rating Elo drużyny gości
+    elo_diff                     – różnica (home_elo - away_elo)
 
-Zmiany v1.3 vs v1.2:
-  - Forma ważona czasowo zastępuje prostą średnią (nowsze mecze ważą więcej)
-  - Dodano Elo rating (home_elo, away_elo, elo_diff)
-  - Usunięto home_injury_score / away_injury_score
-  - FORM_WINDOW zwiększony z 5 do 8 (więcej kontekstu przy ważeniu)
-  - Łącznie 18 cech (było 17)
+Zmiany v1.5 vs v1.3/v1.4:
+  - Elo per liga (było: wszystkie ligi razem) – eliminuje cross-league noise
+  - _get_elo_before przyjmuje parametr league
+  - Poprawka: build_elo_history zwraca {league: {team: [(date, elo)]}}
 """
 import logging
 import math
@@ -44,7 +42,8 @@ from pipeline.name_mapping import normalize
 
 log = logging.getLogger(__name__)
 
-# Cechy zwracane przez compute_features() – kolejność musi być ZAWSZE ta sama
+# Cechy zwracane przez compute_features() – kolejność musi być ZAWSZE ta sama.
+# NIGDY nie zmieniaj kolejności bez pełnego retraining modelu.
 FEATURE_COLS = [
     "home_pts_avg",
     "away_pts_avg",
@@ -61,9 +60,9 @@ FEATURE_COLS = [
     "market_prob_h",
     "market_prob_d",
     "market_prob_a",
-    "home_elo",       # v1.3
-    "away_elo",       # v1.3
-    "elo_diff",       # v1.3
+    "home_elo",
+    "away_elo",
+    "elo_diff",
 ]
 
 
@@ -72,7 +71,7 @@ FEATURE_COLS = [
 def remove_margin(odds_h: float, odds_d: float, odds_a: float) -> tuple[float, float, float]:
     """
     Normalizuje kursy 1X2 usuwając marżę bukmachera (overround).
-    Zwraca (prob_h, prob_d, prob_a) – fair probabilities.
+    Zwraca (prob_h, prob_d, prob_a) – fair probabilities sumujące się do 1.0.
     """
     try:
         raw_h = 1.0 / odds_h
@@ -86,67 +85,86 @@ def remove_margin(odds_h: float, odds_d: float, odds_a: float) -> tuple[float, f
         return 1 / 3, 1 / 3, 1 / 3
 
 
-# ── Elo rating ────────────────────────────────────────────────────────────────
+# ── Elo rating per liga ───────────────────────────────────────────────────────
 
-def build_elo_history(df: pd.DataFrame) -> dict[str, list[tuple[pd.Timestamp, float]]]:
+# Typ zwracany: {liga_kod: {nazwa_druzyny: [(data, elo_po_meczu), ...]}}
+EloHistory = dict[str, dict[str, list[tuple[pd.Timestamp, float]]]]
+
+
+def build_elo_history(df: pd.DataFrame) -> EloHistory:
     """
-    Buduje historię ratingów Elo dla wszystkich drużyn metodą walk-forward.
-    Wykonywany raz przed pętlą treningową – O(n) preprocessing.
+    Buduje historię ratingów Elo OSOBNO dla każdej ligi (walk-forward, O(n)).
+
+    Kalkulacja per liga eliminuje cross-league contamination — drużyny z EPL
+    i Ekstraklasy zaczynają od tego samego startowego ratingu 1500, ale nigdy
+    nie grają między sobą, więc wspólna skala nie miałaby sensu.
 
     Formuła Elo:
       E_home = 1 / (1 + 10^((R_away - R_home) / 400))
       R_new  = R_old + K * (S - E)
-      gdzie S=1 (wygrana), S=0.5 (remis), S=0 (przegrana)
+      S: 1.0=wygrana, 0.5=remis, 0.0=przegrana
 
     Parametry
     ---------
-    df : DataFrame z all_matches.csv posortowany po Date
+    df : DataFrame z all_matches.csv posortowany po Date, z kolumną 'league'
 
     Zwraca
     ------
-    Słownik: team_name → [(date_after_match, elo_after_match), ...]
+    {liga_kod: {drużyna: [(data, elo)]}}
     """
-    elo: dict[str, float] = {}
-    history: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    # elo[liga][druzyna] = bieżący rating
+    elo: dict[str, dict[str, float]] = {}
+    history: EloHistory = {}
 
     for _, row in df.sort_values("Date").iterrows():
-        home = str(row["HomeTeam"])
-        away = str(row["AwayTeam"])
-        date = row["Date"]
-        ftr  = row.get("FTR", "")
+        home   = str(row["HomeTeam"])
+        away   = str(row["AwayTeam"])
+        date   = row["Date"]
+        ftr    = row.get("FTR", "")
+        league = str(row.get("league", "UNKNOWN"))
 
         if ftr not in ("H", "D", "A"):
             continue
 
-        ra = elo.get(home, config.ELO_START)
-        rb = elo.get(away, config.ELO_START)
+        elo.setdefault(league, {})
+        history.setdefault(league, {})
 
-        # Oczekiwane wyniki
+        ra = elo[league].get(home, config.ELO_START)
+        rb = elo[league].get(away, config.ELO_START)
+
         ea = 1.0 / (1.0 + 10.0 ** ((rb - ra) / 400.0))
         eb = 1.0 - ea
 
-        # Rzeczywiste wyniki
         sa = 1.0 if ftr == "H" else (0.5 if ftr == "D" else 0.0)
         sb = 1.0 - sa
 
-        elo[home] = ra + config.ELO_K * (sa - ea)
-        elo[away] = rb + config.ELO_K * (sb - eb)
+        elo[league][home] = ra + config.ELO_K * (sa - ea)
+        elo[league][away] = rb + config.ELO_K * (sb - eb)
 
-        history.setdefault(home, []).append((date, elo[home]))
-        history.setdefault(away, []).append((date, elo[away]))
+        history[league].setdefault(home, []).append((date, elo[league][home]))
+        history[league].setdefault(away, []).append((date, elo[league][away]))
 
-    log.info(f"Elo: obliczono historię dla {len(history)} drużyn")
+    total_teams = sum(len(v) for v in history.values())
+    log.info(
+        f"Elo: obliczono historię dla {total_teams} drużyn "
+        f"w {len(history)} ligach: {list(history.keys())}"
+    )
     return history
 
 
 def _get_elo_before(
-    history: dict[str, list[tuple[pd.Timestamp, float]]],
+    history: EloHistory,
     team: str,
     before_date: pd.Timestamp,
+    league: str = "UNKNOWN",
 ) -> float:
-    """Zwraca ostatni rating Elo drużyny przed podaną datą."""
-    entries = history.get(team, [])
-    relevant = [e for d, e in entries if d < before_date]
+    """
+    Zwraca ostatni rating Elo drużyny w danej lidze przed podaną datą.
+    Jeśli brak historii (nowa drużyna lub nowa liga) – zwraca ELO_START.
+    """
+    league_hist = history.get(league, {})
+    entries     = league_hist.get(team, [])
+    relevant    = [e for d, e in entries if d < before_date]
     return relevant[-1] if relevant else float(config.ELO_START)
 
 
@@ -164,9 +182,9 @@ def _weighted_mean(
     Waga(d) = exp(-ln2 * days_ago / FORM_HALFLIFE_DAYS)
 
     Przy halflife=21 dni:
-      mecz z tego tygodnia  → waga ~1.0
-      mecz sprzed 3 tyg.    → waga ~0.5
-      mecz sprzed 6 tyg.    → waga ~0.25
+      mecz z ostatniego tygodnia  → waga ~1.0
+      mecz sprzed 3 tyg.          → waga ~0.5
+      mecz sprzed 6 tyg.          → waga ~0.25
     """
     if not values:
         return default
@@ -200,8 +218,8 @@ def _calc_form(
     reference_date: pd.Timestamp,
 ) -> dict[str, float]:
     """
-    Oblicza cechy formy z ostatnich meczów drużyny – ważone czasowo (v1.3).
-    Nowsze mecze mają wykładniczo wyższą wagę (halflife=FORM_HALFLIFE_DAYS).
+    Oblicza cechy formy z ostatnich meczów drużyny (ważone czasowo).
+    Zwraca słownik z pts_avg, gf_avg, ga_avg, hst_avg, ast_avg.
     """
     if history.empty:
         return {
@@ -217,7 +235,7 @@ def _calc_form(
 
     for _, row in history.iterrows():
         is_home = row["HomeTeam"] == team
-        ftr = row["FTR"]
+        ftr     = row["FTR"]
 
         if is_home:
             pts = 3 if ftr == "H" else (1 if ftr == "D" else 0)
@@ -240,7 +258,6 @@ def _calc_form(
         dates.append(row["Date"])
 
     def wmean(vals: list, default: float) -> float:
-        """Filtruje NaN i liczy ważoną średnią."""
         pairs = [(v, d) for v, d in zip(vals, dates) if not np.isnan(v)]
         if not pairs:
             return default
@@ -278,7 +295,7 @@ def _calc_h2h(
 
     home_wins, total_goals, count = 0, 0, 0
     for _, row in h2h.iterrows():
-        count += 1
+        count       += 1
         total_goals += float(row["FTHG"]) + float(row["FTAG"])
         if row["HomeTeam"] == home and row["FTR"] == "H":
             home_wins += 1
@@ -297,13 +314,12 @@ def compute_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """
     Tworzy feature matrix (X) i wektor etykiet (y) dla treningu modelu.
 
-    Metoda walk-forward: cechy dla każdego meczu liczone są tylko z danych
-    historycznych (mecze przed datą danego meczu). Elo budowany raz na całym
-    df, forma i H2H liczone per mecz.
+    Walk-forward: cechy dla każdego meczu liczone z danych historycznych
+    PRZED datą danego meczu. Elo budowany raz na całym df (O(n)).
 
     Parametry
     ---------
-    df : DataFrame z all_matches.csv (posortowany po Date)
+    df : DataFrame z all_matches.csv
 
     Zwraca
     ------
@@ -313,7 +329,7 @@ def compute_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # Elo preprocessing – O(n), wykonywany raz
+    # Elo per liga – O(n), wykonywany raz
     elo_history = build_elo_history(df)
 
     result_map = {"H": 0, "D": 1, "A": 2}
@@ -321,9 +337,10 @@ def compute_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     labels: list[int] = []
 
     for _, match in df.iterrows():
-        home = str(match["HomeTeam"])
-        away = str(match["AwayTeam"])
-        date = match["Date"]
+        home   = str(match["HomeTeam"])
+        away   = str(match["AwayTeam"])
+        date   = match["Date"]
+        league = str(match.get("league", "UNKNOWN"))
 
         odds_h = match.get("B365H", np.nan)
         odds_d = match.get("B365D", np.nan)
@@ -342,11 +359,11 @@ def compute_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
         home_form = _calc_form(home_hist, home, date)
         away_form = _calc_form(away_hist, away, date)
 
-        h2h = _calc_h2h(df, home, away, date)
-        prob_h, prob_d, prob_a = remove_margin(odds_h, odds_d, odds_a)
+        h2h                       = _calc_h2h(df, home, away, date)
+        prob_h, prob_d, prob_a    = remove_margin(odds_h, odds_d, odds_a)
 
-        h_elo = _get_elo_before(elo_history, home, date)
-        a_elo = _get_elo_before(elo_history, away, date)
+        h_elo = _get_elo_before(elo_history, home, date, league)
+        a_elo = _get_elo_before(elo_history, away, date, league)
 
         rows.append({
             "home_pts_avg":      home_form["pts_avg"],
@@ -390,8 +407,8 @@ def compute_features_upcoming(
     Parametry
     ---------
     upcoming    : lista słowników z kluczami:
-                  home_team, away_team, date (pd.Timestamp), league,
-                  odds_h, odds_d, odds_a
+                  home_team, away_team, date (pd.Timestamp),
+                  league, odds_h, odds_d, odds_a
     history_df  : historyczny DataFrame z all_matches.csv
 
     Zwraca
@@ -408,8 +425,9 @@ def compute_features_upcoming(
     for match in upcoming:
         home     = str(match["home_team"])
         away     = str(match["away_team"])
+        league   = str(match.get("league", "UNKNOWN"))
         raw_date = pd.Timestamp(match["date"])
-        date = (
+        date     = (
             raw_date.tz_localize(None)
             if raw_date.tzinfo is None
             else raw_date.tz_convert("UTC").tz_localize(None)
@@ -425,11 +443,11 @@ def compute_features_upcoming(
         home_form = _calc_form(home_hist, home, date)
         away_form = _calc_form(away_hist, away, date)
 
-        h2h   = _calc_h2h(history_df, home, away, date)
+        h2h                    = _calc_h2h(history_df, home, away, date)
         prob_h, prob_d, prob_a = remove_margin(odds_h, odds_d, odds_a)
 
-        h_elo = _get_elo_before(elo_history, home, date)
-        a_elo = _get_elo_before(elo_history, away, date)
+        h_elo = _get_elo_before(elo_history, home, date, league)
+        a_elo = _get_elo_before(elo_history, away, date, league)
 
         rows.append({
             "home_pts_avg":      home_form["pts_avg"],
