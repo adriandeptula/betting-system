@@ -4,9 +4,9 @@ pipeline/fetch_odds.py – Pobiera aktualne kursy z The Odds API.
 Źródło: https://the-odds-api.com
 Rynek: h2h (1X2), regiony europejskie.
 
-v1.1: obsługa 2 kluczy API (fallback gdy wyczerpany limit).
-Darmowy tier: 500 requestów/miesiąc (~16/dzień).
-Przy 5 ligach x 2 wywołania = ~10 req/dzień → wystarczy z zapasem.
+3 klucze API z automatycznym fallback gdy limit wyczerpany.
+Darmowy tier: 500 requestów/miesiąc/konto.
+Z 3 kontami: 1500 req/miesiąc — przy 5 ligach × 2 req/dzień wystarczy z zapasem.
 
 Zapisuje: data/odds/odds_YYYY-MM-DD.json
 """
@@ -26,10 +26,10 @@ def fetch_odds_for_league(odds_key: str) -> list[dict]:
     Pobiera mecze i kursy dla jednej ligi.
     Zwraca listę eventów lub [] przy błędzie.
     """
-    url = f"{config.ODDS_API_BASE}/sports/{odds_key}/odds"
+    url    = f"{config.ODDS_API_BASE}/sports/{odds_key}/odds"
     params = {
-        "regions": config.ODDS_API_REGIONS,
-        "markets": config.ODDS_API_MARKETS,
+        "regions":    config.ODDS_API_REGIONS,
+        "markets":    config.ODDS_API_MARKETS,
         "oddsFormat": "decimal",
     }
 
@@ -57,7 +57,7 @@ def fetch_all_odds() -> None:
     if not config.ODDS_API_KEYS:
         log.error(
             "Brak kluczy The Odds API! "
-            "Ustaw ODDS_API_KEY (i opcjonalnie ODDS_API_KEY_2) w GitHub Secrets."
+            "Ustaw ODDS_API_KEY (i opcjonalnie ODDS_API_KEY_2/3) w GitHub Secrets."
         )
         return
 
@@ -65,8 +65,7 @@ def fetch_all_odds() -> None:
 
     for league_code, league_cfg in config.LEAGUES.items():
         odds_key = league_cfg["odds_key"]
-        events = fetch_odds_for_league(odds_key)
-        # Wzbogać każdy event o nasz wewnętrzny kod ligi
+        events   = fetch_odds_for_league(odds_key)
         for ev in events:
             ev["_league_code"] = league_code
         all_events.extend(events)
@@ -76,7 +75,7 @@ def fetch_all_odds() -> None:
         return
 
     os.makedirs(config.DATA_ODDS, exist_ok=True)
-    today = date.today().isoformat()
+    today    = date.today().isoformat()
     out_path = os.path.join(config.DATA_ODDS, f"odds_{today}.json")
 
     with open(out_path, "w", encoding="utf-8") as f:
