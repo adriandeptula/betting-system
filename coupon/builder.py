@@ -8,6 +8,11 @@ Strategia:
   3. Potrójny – 3 kolejne value bety (jeśli wystarczy)
 
 Kupony są rozłączne (każdy mecz max w jednym kuponie).
+
+v1.5 poprawka:
+  - parlay_stake(): dzielnik zmieniony z len(legs) na len(individual).
+    Gdy któraś noga ma ujemne Kelly (kelly_stake=0, noga pomijana),
+    poprzedni kod dzielił przez zbyt dużą liczbę i zaniżał stawkę parlaya.
 """
 import json
 import logging
@@ -44,21 +49,21 @@ def build_coupons(value_bets: list) -> list:
         log.warning("Brak value betów – nie tworzę kuponów.")
         return []
 
-    coupons = []
+    coupons  = []
     used_ids: set = set()
 
     # ── Kupon 1: Singiel ─────────────────────────────────────────────────────
-    best = value_bets[0]
+    best  = value_bets[0]
     stake = kelly_stake(best["model_prob"], best["bet_odds"])
     if stake > 0:
         coupons.append({
-            "type":          "SINGIEL",
-            "legs":          [best],
-            "total_odds":    round(best["bet_odds"], 2),
-            "combined_prob": round(best["model_prob"], 4),
-            "stake":         stake,
+            "type":           "SINGIEL",
+            "legs":           [best],
+            "total_odds":     round(best["bet_odds"], 2),
+            "combined_prob":  round(best["model_prob"], 4),
+            "stake":          stake,
             "expected_value": round(best["expected_value"], 4),
-            "result":        "PENDING",
+            "result":         "PENDING",
         })
         used_ids.add(best["match_id"])
 
@@ -69,13 +74,13 @@ def build_coupons(value_bets: list) -> list:
         ev = _ev([leg1, leg2])
         if ev > 0:
             coupons.append({
-                "type":          "PODWÓJNY",
-                "legs":          [leg1, leg2],
-                "total_odds":    round(leg1["bet_odds"] * leg2["bet_odds"], 2),
-                "combined_prob": round(leg1["model_prob"] * leg2["model_prob"], 4),
-                "stake":         parlay_stake([leg1, leg2]),
+                "type":           "PODWÓJNY",
+                "legs":           [leg1, leg2],
+                "total_odds":     round(leg1["bet_odds"] * leg2["bet_odds"], 2),
+                "combined_prob":  round(leg1["model_prob"] * leg2["model_prob"], 4),
+                "stake":          parlay_stake([leg1, leg2]),
                 "expected_value": round(ev, 4),
-                "result":        "PENDING",
+                "result":         "PENDING",
             })
             used_ids.update([leg1["match_id"], leg2["match_id"]])
 
@@ -86,13 +91,13 @@ def build_coupons(value_bets: list) -> list:
         ev3 = _ev([l1, l2, l3])
         if ev3 > 0:
             coupons.append({
-                "type":          "POTRÓJNY",
-                "legs":          [l1, l2, l3],
-                "total_odds":    round(l1["bet_odds"] * l2["bet_odds"] * l3["bet_odds"], 2),
-                "combined_prob": round(l1["model_prob"] * l2["model_prob"] * l3["model_prob"], 4),
-                "stake":         parlay_stake([l1, l2, l3]),
+                "type":           "POTRÓJNY",
+                "legs":           [l1, l2, l3],
+                "total_odds":     round(l1["bet_odds"] * l2["bet_odds"] * l3["bet_odds"], 2),
+                "combined_prob":  round(l1["model_prob"] * l2["model_prob"] * l3["model_prob"], 4),
+                "stake":          parlay_stake([l1, l2, l3]),
                 "expected_value": round(ev3, 4),
-                "result":        "PENDING",
+                "result":         "PENDING",
             })
 
     coupons = coupons[:COUPONS_PER_WEEK]
