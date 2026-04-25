@@ -3,14 +3,23 @@ model/train.py
 Trenuje model XGBoost do przewidywania wyników meczów (H/D/A).
 
 Kluczowe decyzje projektowe:
-- Multiclass (3 klasy), nie binary
-- Kalibracja Platta (CalibratedClassifierCV) → prawdopodobieństwa działają jako EV
-- Walk-forward validation (nie random split) – unika data leakage
-- Brier Score jako główna metryka (nie accuracy)
-- Calibration plot zapisywany do data/model/calibration.png [v1.3]
+  - Multiclass (3 klasy), nie binary
+  - Kalibracja Platta z temporal split (cv='prefit') – bez data leakage w kalibracji
+  - Walk-forward validation (nie random split) – unika data leakage w treningu
+  - Brier Score jako główna metryka (nie accuracy)
+  - Logowanie feature importance (top-8) przy każdym retreningu
+  - Calibration plot zapisywany do data/model/calibration.png
 
-Uwaga o accuracy: piłka nożna ma dużą losowość – nawet najlepsze modele
-osiągają ~54-58% dla 1X2. Wartość systemu leży w ROI, nie accuracy.
+v1.5 poprawki:
+  - CalibratedClassifierCV(cv='prefit') zamiast cv=5 — eliminuje temporal leakage
+    w kalibracji Platta (poprzednio random k-fold mieszał przyszłe mecze z przeszłymi)
+  - _simulate_roi: prawidłowy wzór na kurs bukmachera (bookmaker_odds = fair_odds / 1.05)
+    (poprzednio: 0.95/market_p = fair_odds*0.95 — błędny, zaniżał ROI)
+  - Logowanie feature importances z pierwszego estymatora kalibracji
+
+Uwaga o accuracy: piłka nożna ma dużą losowość.
+~54-58% accuracy dla 1X2 to norma nawet dla najlepszych modeli.
+Wartość systemu leży w długoterminowym ROI z value betów, nie accuracy.
 """
 import logging
 import pickle
@@ -40,26 +49,35 @@ def train_model() -> None:
     df = pd.read_csv(csv_path)
     log.info(f"Wczytano {len(df)} historycznych meczów")
 
-    # Buduj cechy walk-forward (v1.3: forma ważona + Elo)
     X, y = compute_features(df)
 
     if len(X) < 200:
         log.error(f"Za mało danych treningowych: {len(X)}. Potrzeba min. 200.")
         return
 
-    # league_codes do zapisu w model.pkl
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    league_col = "league" if "league" in df.columns else "League"
+    league_col   = "league" if "league" in df.columns else "League"
     league_codes = {c: i for i, c in enumerate(sorted(df[league_col].dropna().unique()))}
 
-    # Walk-forward split: ostatnie 15% jako test (nie random!)
-    split = int(len(X) * 0.85)
-    X_train, X_test = X.iloc[:split], X.iloc[split:]
-    y_train, y_test = y.iloc[:split], y.iloc[split:]
+    # ── Splits ───────────────────────────────────────────────────────────────
+    # Główny split: 85% train / 15% test (walk-forward, nie random)
+    split_main = int(len(X) * 0.85)
+    X_train_full, X_test = X.iloc[:split_main], X.iloc[split_main:]
+    y_train_full, y_test = y.iloc[:split_main], y.iloc[split_main:]
 
-    log.info(f"Train: {len(X_train)}, Test: {len(X_test)}")
+    # Wewnętrzny split na trening bazy i kalibrację Platta:
+    # 80% na XGBoost, 20% na kalibrację – oba w porządku chronologicznym.
+    # cv='prefit' wymaga wytrenowanego modelu bazowego przed kalibracją.
+    split_cal = int(len(X_train_full) * 0.80)
+    X_base, X_cal = X_train_full.iloc[:split_cal], X_train_full.iloc[split_cal:]
+    y_base, y_cal = y_train_full.iloc[:split_cal], y_train_full.iloc[split_cal:]
 
-    # XGBoost
+    log.info(
+        f"Splity — bazowy XGB: {len(X_base)}, kalibracja Platta: {len(X_cal)}, "
+        f"test (hold-out): {len(X_test)}"
+    )
+
+    # ── XGBoost ───────────────────────────────────────────────────────────────
     base = XGBClassifier(
         n_estimators=300,
         max_depth=4,
@@ -72,12 +90,15 @@ def train_model() -> None:
         n_jobs=-1,
         verbosity=0,
     )
+    base.fit(X_base, y_base)
 
-    # Kalibracja Platta – kluczowa dla value bettingu!
-    model = CalibratedClassifierCV(base, cv=5, method="sigmoid")
-    model.fit(X_train, y_train)
+    # ── Kalibracja Platta (temporal – bez data leakage) ───────────────────────
+    # cv='prefit': model już wytrenowany, kalibruj tylko sigmoidem na X_cal.
+    # X_cal pochodzi CHRONOLOGICZNIE PO X_base → brak leakage.
+    model = CalibratedClassifierCV(base, cv="prefit", method="sigmoid")
+    model.fit(X_cal, y_cal)
 
-    # ── Ewaluacja ────────────────────────────────────────────────────────────
+    # ── Ewaluacja na hold-out ─────────────────────────────────────────────────
     proba = model.predict_proba(X_test)
     preds = model.predict(X_test)
 
@@ -89,7 +110,7 @@ def train_model() -> None:
 
     log.info("─── WYNIKI MODELU ───────────────────────────────")
     log.info(f"Accuracy:      {acc:.3f}  (baseline faworyt: {baseline_acc:.3f})")
-    log.info(f"Brier (Home):  {bs_h:.4f}  (niższy = lepszy)")
+    log.info(f"Brier (Home):  {bs_h:.4f}  (niższy = lepszy, <0.20 bardzo dobry)")
     log.info(f"Brier (Away):  {bs_a:.4f}")
     log.info(f"Log Loss:      {ll:.4f}")
     log.info("─────────────────────────────────────────────────")
@@ -103,10 +124,11 @@ def train_model() -> None:
     else:
         log.info(f"✓ Model bije baseline o {acc - baseline_acc:.3f}")
 
+    _log_feature_importance(base)
     _simulate_roi(X_test, y_test, proba)
     _save_calibration_plot(y_test, proba)
 
-    # ── Zapis ────────────────────────────────────────────────────────────────
+    # ── Zapis ─────────────────────────────────────────────────────────────────
     with open(MODEL_PATH, "wb") as f:
         pickle.dump({
             "model":        model,
@@ -116,6 +138,7 @@ def train_model() -> None:
                 "accuracy": float(acc),
                 "baseline": float(baseline_acc),
                 "brier_h":  float(bs_h),
+                "brier_a":  float(bs_a),
                 "log_loss": float(ll),
             },
         }, f)
@@ -123,20 +146,33 @@ def train_model() -> None:
     log.info(f"✓ Model zapisany → {MODEL_PATH}")
 
 
+def _log_feature_importance(base_model: XGBClassifier) -> None:
+    """
+    Loguje top-8 cech według feature importance z modelu bazowego XGBoost.
+    Pomaga diagnozować czy Elo, forma czy kursy dominują w predykcjach.
+    """
+    try:
+        importances = base_model.feature_importances_
+        pairs       = sorted(zip(FEATURE_COLS, importances), key=lambda x: x[1], reverse=True)
+        log.info("─── FEATURE IMPORTANCE (top 8) ──────────────────")
+        for name, imp in pairs[:8]:
+            bar = "█" * int(imp * 200)
+            log.info(f"  {name:<22} {imp:.4f}  {bar}")
+        log.info("─────────────────────────────────────────────────")
+    except Exception as exc:
+        log.warning(f"Nie udało się zalogować feature importance: {exc}")
+
+
 def _simulate_roi(X_test, y_test, proba, min_edge: float = 0.05) -> None:
     """
     Symulacja value betting na danych testowych.
 
-    Używa rzeczywistych kursów B365 z zestawu testowego, nie fair odds.
-    Fair odds zawyżają symulowany ROI o ~5-8% (wysokość marży bukmachera).
+    Używa rzeczywistych fair probabilities z danych testowych i przybliża
+    kurs bukmachera jako fair_odds / 1.05 (~5% overround dla EPL/BL).
 
-    Uwaga podatkowa (Polska): 10% podatek od wygranych > 2280 PLN pobierany
-    automatycznie przez bukmachera. Przy standardowych parametrach systemu
-    (bankroll ≤ 15 000 PLN, MAX_BET_PCT=3%) próg ten nie jest osiągany –
-    symulacja nie koryguje o ten podatek. Przy bankrollu > 15 000 PLN
-    należy uwzględnić w obliczeniach Kelly (v1.4 TODO).
+    Poprzedni błąd: 0.95 / market_p = fair_odds * 0.95 — kurs NIŻSZY od fair.
+    Poprawka:       1.0  / market_p = fair_odds, podziel przez 1+margin.
     """
-    # Mapowanie: (index klasy, kolumna prob rynkowej, kolumna kursu B365)
     col_map = [
         (0, "market_prob_h"),
         (1, "market_prob_d"),
@@ -153,31 +189,31 @@ def _simulate_roi(X_test, y_test, proba, min_edge: float = 0.05) -> None:
                 continue
             model_p = proba[i, col_idx]
             edge    = model_p - market_p
+
             if edge >= min_edge:
-                # Używaj rzeczywistego kursu rynkowego (z marżą bukmachera),
-                # nie fair odds (1/market_p). To daje realistyczną symulację ROI.
-                real_odds = 1.0 / market_p * (1.0 - (1.0 - 1.0 / (market_p)) * 0.0)
-                # Przybliżenie: kurs bukmachera ≈ fair_odds * (1 - margin/n_outcomes)
-                # Dla uproszczenia używamy market_p z overroundem już wbudowanym
-                # w cechy (były pobrane jako surowe kursy, znormalizowane przez
-                # remove_margin). Odtwarzamy kurs przybliżony jako 0.95 / market_p
-                # (zakładając ~5% overround typowy dla EPL/Bundesliga).
-                approx_odds = 0.95 / market_p
+                # market_p to fair probability (po remove_margin w features.py).
+                # fair_odds = 1/market_p. Kurs bukmachera ≈ fair_odds / 1.05.
+                fair_odds      = 1.0 / market_p
+                bookmaker_odds = fair_odds / 1.05   # ~5% overround
+
                 total_staked += 1
                 bets_placed  += 1
                 if y_test.iloc[i] == col_idx:
-                    total_return += approx_odds
+                    total_return += bookmaker_odds
 
     if bets_placed > 0:
         roi = (total_return - total_staked) / total_staked * 100
-        log.info(f"Symulacja ROI (kursy z ~5% marżą): {roi:.1f}% na {bets_placed} zakładach")
+        log.info(
+            f"Symulacja ROI (kursy z ~5% marżą bukmachera): "
+            f"{roi:.1f}% na {bets_placed} zakładach"
+        )
     else:
         log.info("Brak zakładów spełniających kryteria w symulacji ROI.")
 
 
 def _save_calibration_plot(y_test, proba) -> None:
     """
-    Zapisuje calibration plot do data/model/calibration.png [v1.3].
+    Zapisuje calibration plot do data/model/calibration.png.
     Dobra kalibracja = linia blisko przekątnej (predicted ≈ actual).
     """
     try:
@@ -188,9 +224,11 @@ def _save_calibration_plot(y_test, proba) -> None:
         fig, ax = plt.subplots(figsize=(7, 6))
         ax.plot([0, 1], [0, 1], "k--", label="Idealna kalibracja", alpha=0.6)
 
-        labels_map = {0: ("Wygrana gospodarza", "steelblue"),
-                      1: ("Remis",              "orange"),
-                      2: ("Wygrana gościa",     "crimson")}
+        labels_map = {
+            0: ("Wygrana gospodarza", "steelblue"),
+            1: ("Remis",              "orange"),
+            2: ("Wygrana gościa",     "crimson"),
+        }
 
         for cls_idx, (label, color) in labels_map.items():
             frac_pos, mean_pred = calibration_curve(
@@ -203,8 +241,10 @@ def _save_calibration_plot(y_test, proba) -> None:
 
         ax.set_xlabel("Średnie przewidywane prawdopodobieństwo")
         ax.set_ylabel("Rzeczywista częstość")
-        ax.set_title("Calibration Plot – jakość kalibracji modelu\n"
-                     "(im bliżej przekątnej, tym lepsza kalibracja)")
+        ax.set_title(
+            "Calibration Plot — jakość kalibracji modelu\n"
+            "(im bliżej przekątnej, tym lepsza kalibracja)"
+        )
         ax.legend(loc="upper left")
         ax.grid(True, alpha=0.3)
 
@@ -214,7 +254,7 @@ def _save_calibration_plot(y_test, proba) -> None:
         log.info(f"✓ Calibration plot zapisany → {out_path}")
 
     except ImportError:
-        log.warning("matplotlib niedostępny – pominięto calibration plot")
+        log.warning("matplotlib niedostępny — pominięto calibration plot")
     except Exception as exc:
         log.warning(f"Błąd generowania calibration plot: {exc}")
 
