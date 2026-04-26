@@ -28,6 +28,97 @@
       "amount": -6.0,
       "coupon_id": "",
       "note": "Stawka na kupon"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.64,
+      "coupon_id": "1",
+      "note": "Stawka na kupon #1"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -5.0,
+      "coupon_id": "2",
+      "note": "Stawka na kupon #2"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "payout",
+      "amount": 4.4,
+      "coupon_id": "1",
+      "note": "Wygrana kupon #1"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -5.0,
+      "coupon_id": "3",
+      "note": "Stawka na kupon #3"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -5.0,
+      "coupon_id": "4",
+      "note": "Stawka na kupon #4"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.5,
+      "coupon_id": "5",
+      "note": "Stawka na kupon #5"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.5,
+      "coupon_id": "6",
+      "note": "Stawka na kupon #6"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "7",
+      "note": "Stawka na kupon #7"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "payout",
+      "amount": 4.4,
+      "coupon_id": "7",
+      "note": "Wygrana kupon #7"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "8",
+      "note": "Stawka na kupon #8"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "9",
+      "note": "Stawka na kupon #9"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "11",
+      "note": "Stawka na kupon #11"
+    },
+    {
+      "date": "2026-04-26 02:48",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "12",
+      "note": "Stawka na kupon #12"
     }
   ]
 }
