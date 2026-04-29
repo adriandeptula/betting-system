@@ -7,6 +7,7 @@ Tryby użycia:
   python main.py train   – trenuj/retrenuj model
   python main.py coupon  – generuj kupony i wyślij na Telegram
   python main.py stats   – oblicz i wyślij statystyki ROI
+  python main.py resolve – auto-rozlicz PENDING kupony (bez pełnych statystyk)
   python main.py bot     – sprawdź komendy Telegram i odpowiedz
   python main.py full    – fetch + train + coupon (pierwsze uruchomienie)
 """
@@ -63,6 +64,18 @@ def run_coupon() -> None:
         first_index = sum(len(e.get("coupons", [])) for e in history) + 1
 
     save_coupons(coupons)
+
+    # Dołącz link do webapp (jeśli skonfigurowany w env)
+    import os
+    webapp_url = os.environ.get("WEBAPP_URL", "")
+    if webapp_url and coupons:
+        from notify.telegram import send_message
+        send_message(
+            f"🌐 <b>Panel kuponu dostępny online:</b>\n"
+            f"<a href='{webapp_url}'>{webapp_url}</a>\n"
+            f"<i>Uzupełnij stawkę i kurs bukmachera w panelu.</i>"
+        )
+
     send_coupons(coupons, first_coupon_index=first_index)
 
 
@@ -90,6 +103,36 @@ def run_stats() -> None:
     )
 
 
+def run_resolve() -> None:
+    """
+    Rozlicza PENDING kupony przez The Odds API /scores.
+    Wywołuje auto_resolve_pending_coupons() bez pełnych statystyk.
+    Wywoływany przez dedykowany workflow co 6h i po każdym daily_fetch.
+
+    Jeśli TELEGRAM_TOKEN jest dostępny i cokolwiek zostało rozliczone,
+    wysyła krótkie powiadomienie.
+    """
+    log.info("══ RESOLVE: auto-rozliczanie kuponów ════════════")
+    from model.evaluate import auto_resolve_pending_coupons, get_pending_summary
+    from config import TELEGRAM_TOKEN
+
+    resolved = auto_resolve_pending_coupons()
+    log.info(f"Auto-resolve: rozliczono {resolved} kuponów")
+
+    if resolved > 0 and TELEGRAM_TOKEN:
+        try:
+            from notify.telegram import send_message
+            from notify.finance import get_summary, format_summary_message
+            pending = get_pending_summary()
+            s = get_summary()
+            send_message(
+                f"🤖 <b>Auto-rozliczono {resolved} kuponów</b>\n\n"
+                + format_summary_message(s, pending)
+            )
+        except Exception as e:
+            log.warning(f"Nie udało się wysłać powiadomienia Telegram: {e}")
+
+
 def run_bot() -> None:
     log.info("══ BOT: polling Telegram ═════════════════════════")
     from notify.bot_handler import poll_and_respond
@@ -98,12 +141,13 @@ def run_bot() -> None:
 
 
 MODES = {
-    "fetch":  run_fetch,
-    "train":  run_train,
-    "coupon": run_coupon,
-    "stats":  run_stats,
-    "bot":    run_bot,
-    "full":   lambda: (run_fetch(), run_train(), run_coupon()),
+    "fetch":   run_fetch,
+    "train":   run_train,
+    "coupon":  run_coupon,
+    "stats":   run_stats,
+    "resolve": run_resolve,
+    "bot":     run_bot,
+    "full":    lambda: (run_fetch(), run_train(), run_coupon()),
 }
 
 
