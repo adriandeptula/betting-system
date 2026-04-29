@@ -1,0 +1,52 @@
+name: Auto-Resolve Coupons
+
+on:
+  schedule:
+    # Co 6 godzin – rozlicza zakończone mecze na bieżąco
+    # (bot_polling robi to co godzinę ale tylko gdy TELEGRAM jest skonfigurowany)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: data-write
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Auto-resolve pending coupons
+        env:
+          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2:   ${{ secrets.ODDS_API_KEY_2 }}
+          ODDS_API_KEY_3:   ${{ secrets.ODDS_API_KEY_3 }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BANKROLL:         ${{ secrets.BANKROLL }}
+          WEBAPP_URL:       ${{ secrets.WEBAPP_URL }}
+        run: python main.py resolve
+
+      - name: Commit resolved coupons
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/results/
+          git diff --staged --quiet || git commit -m "resolve: auto-rozliczenie $(date +'%Y-%m-%d %H:%M')"
+          git push
