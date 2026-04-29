@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Betting System — Panel</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>🎯</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Loading bar -->
+<div id="loading-bar"></div>
+
+<!-- Header -->
+<header>
+  <div class="header-inner">
+    <a class="logo" href="#">
+      <span class="logo-icon">🎯</span>
+      <span class="logo-text">AI<span>BET</span></span>
+    </a>
+    <nav>
+      <button class="nav-tab active" data-tab="dashboard">Dashboard</button>
+      <button class="nav-tab" data-tab="coupons">Kupony</button>
+      <button class="nav-tab" data-tab="stats">Statystyki</button>
+      <button class="nav-tab" data-tab="settings">Ustawienia</button>
+    </nav>
+    <div class="header-actions">
+      <button class="btn-reload-icon" id="btn-reload" title="Odśwież dane">↻</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ═══ DASHBOARD ═══════════════════════════════════════════════════ -->
+  <div class="tab-content active" id="tab-dashboard">
+
+    <div id="dashboard-error"></div>
+
+    <!-- Main stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Całościowy wynik</div>
+        <div class="stat-value neutral" id="stat-overall">— PLN</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Player ROI</div>
+        <div class="stat-value neutral" id="stat-roi">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Łącznie postawiono</div>
+        <div class="stat-value neutral" id="stat-staked">— PLN</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Łącznie wypłacono</div>
+        <div class="stat-value neutral" id="stat-payout">— PLN</div>
+      </div>
+    </div>
+
+    <!-- Coupon counts -->
+    <div class="counts-row">
+      <div class="count-chip" onclick="switchTab('coupons')">
+        <span>🆕 Nowe</span><span class="chip-num" id="count-new">0</span>
+      </div>
+      <div class="count-chip" onclick="switchTab('coupons')">
+        <span>⚡ W grze</span><span class="chip-num" id="count-playing">0</span>
+      </div>
+      <div class="count-chip" onclick="switchTab('coupons')">
+        <span>⏳ Oczekujące</span><span class="chip-num" id="count-pending">0</span>
+      </div>
+      <div class="count-chip" onclick="switchTab('coupons')">
+        <span>✅ Wygrane</span><span class="chip-num" id="count-won">0</span>
+      </div>
+      <div class="count-chip" onclick="switchTab('coupons')">
+        <span>❌ Przegrane</span><span class="chip-num" id="count-lost">0</span>
+      </div>
+      <div class="count-chip" onclick="openBalanceModal()" title="Kliknij aby ustawić punkt startowy">
+        <span>💼 Ustaw start</span>
+      </div>
+    </div>
+
+    <!-- Pending range -->
+    <div class="pending-range" id="pending-range" style="display:none">
+      <span class="range-label">⏳ W grze (<span id="pending-at-stake">0 PLN</span>)</span>
+      <span class="range-sep">→</span>
+      <span class="range-label">Najgorszy scenariusz:</span>
+      <span class="range-val range-worst" id="range-worst">—</span>
+      <span class="range-sep"> | </span>
+      <span class="range-label">Najlepszy:</span>
+      <span class="range-val range-best" id="range-best">—</span>
+    </div>
+
+    <!-- Recent coupons -->
+    <div class="section-title">Ostatnie kupony</div>
+    <div class="coupons-container" id="recent-coupons">
+      <div class="empty-state">
+        <div class="empty-icon">📂</div>
+        <p>Załaduj dane aby zobaczyć kupony.</p>
+      </div>
+    </div>
+
+  </div><!-- /dashboard -->
+
+
+  <!-- ═══ KUPONY ═══════════════════════════════════════════════════════ -->
+  <div class="tab-content" id="tab-coupons">
+
+    <div class="filter-bar">
+      <button class="filter-btn active" data-filter="all">
+        Wszystkie <span class="badge">0</span>
+      </button>
+      <button class="filter-btn" data-filter="new">
+        🆕 Nowe (nie zagrane) <span class="badge">0</span>
+      </button>
+      <button class="filter-btn" data-filter="playing">
+        ⚡ W grze <span class="badge">0</span>
+      </button>
+      <button class="filter-btn" data-filter="pending">
+        ⏳ Oczekujące <span class="badge">0</span>
+      </button>
+      <button class="filter-btn" data-filter="won">
+        ✅ Wygrane <span class="badge">0</span>
+      </button>
+      <button class="filter-btn" data-filter="lost">
+        ❌ Przegrane <span class="badge">0</span>
+      </button>
+    </div>
+
+    <div class="coupons-container" id="coupons-list">
+      <div class="empty-state">
+        <div class="empty-icon">🎯</div>
+        <p>Brak kuponów. Załaduj dane lub sprawdź ustawienia.</p>
+      </div>
+    </div>
+
+  </div><!-- /coupons -->
+
+
+  <!-- ═══ STATYSTYKI ═══════════════════════════════════════════════════ -->
+  <div class="tab-content" id="tab-stats">
+
+    <div class="section-title">Model ROI (sugerowane stawki Kelly)</div>
+    <div class="model-stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Model ROI</div>
+        <div class="stat-value large neutral" id="model-roi">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Model — postawiono</div>
+        <div class="stat-value neutral" id="model-staked">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Model — zwrot z wygranych</div>
+        <div class="stat-value neutral" id="model-return">—</div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-title">Wyniki kuponów</div>
+        <div class="chart-container">
+          <canvas id="chart-winrate"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Wynik miesięczny (Player ROI)</div>
+        <div class="chart-container">
+          <canvas id="chart-monthly"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /stats -->
+
+
+  <!-- ═══ USTAWIENIA ═══════════════════════════════════════════════════ -->
+  <div class="tab-content" id="tab-settings">
+
+    <div class="settings-grid">
+
+      <!-- GitHub config -->
+      <div class="settings-card">
+        <h3>🔗 Połączenie z GitHub</h3>
+        <div id="config-status"><span class="status-err">⚠️ Nie skonfigurowano</span></div>
+
+        <div class="form-group">
+          <label>GitHub Username / Org *</label>
+          <input type="text" id="cfg-owner" class="form-input" placeholder="np. jankowalski">
+        </div>
+        <div class="form-group">
+          <label>Nazwa repozytorium *</label>
+          <input type="text" id="cfg-repo" class="form-input" placeholder="np. betting-system">
+        </div>
+        <div class="form-group">
+          <label>Gałąź</label>
+          <input type="text" id="cfg-branch" class="form-input" placeholder="main" value="main">
+        </div>
+        <div class="form-group">
+          <label>Personal Access Token (PAT) *</label>
+          <input type="password" id="cfg-token" class="form-input" placeholder="ghp_...">
+          <span class="hint">Wymagany scope: <code>repo</code> (odczyt + zapis)</span>
+        </div>
+        <div class="form-group">
+          <label>URL panelu webowego (opcjonalnie)</label>
+          <input type="text" id="cfg-webapp-url" class="form-input" placeholder="https://twoja-nazwa.github.io/betting-system/webapp/">
+          <span class="hint">Dodawany do powiadomień Telegram przy nowych kuponach.</span>
+        </div>
+
+        <div class="settings-actions">
+          <button class="btn btn-primary btn-md" id="btn-save-config">Zapisz konfigurację</button>
+          <button class="btn btn-ghost btn-md" id="btn-test-connection">Testuj połączenie</button>
+        </div>
+      </div>
+
+      <!-- How to setup -->
+      <div class="settings-card">
+        <h3>📖 Jak uruchomić</h3>
+        <div class="info-box">
+          <strong>1. Utwórz Personal Access Token</strong><br>
+          GitHub → Settings → Developer settings → Personal access tokens → <em>Fine-grained</em> lub <em>Classic</em>.<br>
+          Scope: <code>repo</code> (pełny dostęp do prywatnych repozytoriów).<br><br>
+
+          <strong>2. Wgraj webapp do repozytorium</strong><br>
+          Umieść pliki w folderze <code>webapp/</code> w repozytorium.<br>
+          Włącz GitHub Pages: Settings → Pages → Source: <em>main /webapp</em>.<br><br>
+
+          <strong>3. Dodaj GitHub Secret WEBAPP_URL</strong><br>
+          W GitHub Secrets dodaj <code>WEBAPP_URL</code> z adresem tej strony.<br>
+          Kupony wysyłane przez Telegram będą zawierały link do panelu.<br><br>
+
+          <strong>4. Auto-resolve</strong><br>
+          Dodaj plik <code>.github/workflows/auto_resolve.yml</code> z folderu <code>fix/</code>.<br>
+          Kupony będą automatycznie rozliczane co 6 godzin i po każdym daily_fetch.<br><br>
+
+          <strong>5. Dane odczytywane/zapisywane</strong><br>
+          <code>data/results/coupons_history.json</code> — historia kuponów<br>
+          <code>data/results/finance.json</code> — Twoje transakcje<br><br>
+
+          ⚠️ Token jest przechowywany w <code>localStorage</code> przeglądarki.<br>
+          Nie otwieraj panelu na współdzielonych komputerach.
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /settings -->
+
+</main>
+
+<!-- ── Modal overlay ───────────────────────────────────────────────────── -->
+<div id="modal-overlay">
+  <div class="modal-box">
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- ── Toast container ────────────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="js/github.js"></script>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
