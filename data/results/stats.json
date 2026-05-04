@@ -1,10 +1,10 @@
 {
-  "total_coupons": 18,
+  "total_coupons": 27,
   "won": 0,
   "lost": 0,
-  "pending": 18,
+  "pending": 27,
   "staked_resolved": 0.0,
   "total_model_return": 0.0,
   "model_roi": 0.0,
-  "updated_at": "2026-04-28T22:24:59.915353"
+  "updated_at": "2026-05-04T07:46:01.992453"
 }
