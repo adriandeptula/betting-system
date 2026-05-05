@@ -113,13 +113,44 @@ def run_bot() -> None:
     log.info(f"Przetworzono {n} komend")
 
 
+def run_resolve() -> None:
+    """
+    Auto-rozlicza PENDING kupony bez uruchamiania pełnego pollingu bota.
+    Wywoływany przez workflow 'Auto-Resolve Coupons' (python main.py resolve).
+
+    Różnica od 'bot':
+      - bot:     getUpdates + auto_resolve + obsługa komend
+      - resolve: tylko auto_resolve — szybszy, bez konieczności TELEGRAM_TOKEN
+                 (ODDS_API_KEY nadal wymagany)
+    """
+    log.info("══ RESOLVE: auto-rozliczanie kuponów ════════════")
+    from model.evaluate import auto_resolve_pending_coupons, get_pending_summary
+    from notify.telegram import send_message
+    from notify.finance import get_summary, format_summary_message
+
+    resolved = auto_resolve_pending_coupons()
+    log.info(f"Rozliczono {resolved} kuponów.")
+
+    if resolved > 0:
+        try:
+            pending = get_pending_summary()
+            s       = get_summary()
+            send_message(
+                f"🤖 <b>Auto-rozliczono {resolved} kuponów</b>\n\n"
+                + format_summary_message(s, pending)
+            )
+        except Exception as e:
+            log.warning(f"Nie udało się wysłać powiadomienia Telegram: {e}")
+
+
 MODES = {
-    "fetch":  run_fetch,
-    "train":  run_train,
-    "coupon": run_coupon,
-    "stats":  run_stats,
-    "bot":    run_bot,
-    "full":   lambda: (run_fetch(), run_train(), run_coupon()),
+    "fetch":   run_fetch,
+    "train":   run_train,
+    "coupon":  run_coupon,
+    "stats":   run_stats,
+    "bot":     run_bot,
+    "resolve": run_resolve,
+    "full":    lambda: (run_fetch(), run_train(), run_coupon()),
 }
 
 
