@@ -1,6 +1,11 @@
 """
 model/predict.py
 Generuje predykcje dla nadchodzących meczów na podstawie wytrenowanego modelu.
+
+v1.6 zmiany:
+  - load_model(): obsługuje nowy format ensemble {"model_type": "ensemble", "models": [...]}
+    i stary format {"model": ...} (backward compat)
+  - predict_matches(): proba = mean([m.predict_proba(X) for m in models])
 """
 import json
 import logging
@@ -8,6 +13,7 @@ import pickle
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from config import DATA_ODDS, DATA_RAW, MODEL_PATH
@@ -17,14 +23,48 @@ from pipeline.name_mapping import normalize
 log = logging.getLogger(__name__)
 
 
-def load_model():
-    """Wczytuje model i metadane z pliku."""
+def load_model() -> tuple | None:
+    """
+    Wczytuje model(e) i metadane z pliku pkl.
+
+    Obsługuje dwa formaty:
+      v1.6 ensemble: {"model_type": "ensemble", "models": [cal_xgb, cal_lgb], ...}
+      v1.5 single:   {"model": cal_xgb, ...}  (backward compat)
+
+    Zwraca (models_list, feature_cols, league_codes) lub None przy błędzie.
+    """
     if not Path(MODEL_PATH).exists():
         log.error(f"Brak modelu: {MODEL_PATH}. Uruchom: python main.py train")
         return None
+
     with open(MODEL_PATH, "rb") as f:
         saved = pickle.load(f)
-    return saved["model"], saved["feature_cols"], saved["league_codes"]
+
+    feature_cols = saved["feature_cols"]
+    league_codes = saved["league_codes"]
+
+    # v1.6 ensemble format
+    if saved.get("model_type") == "ensemble":
+        models     = saved["models"]
+        names      = saved.get("model_names", [f"model_{i}" for i in range(len(models))])
+        n_models   = len(models)
+        metrics    = saved.get("metrics", {})
+        log.info(
+            f"Wczytano ensemble: {' + '.join(names)} "
+            f"(acc={metrics.get('accuracy', 0):.3f}, "
+            f"ll={metrics.get('log_loss', 0):.4f}, "
+            f"Optuna trials={metrics.get('optuna_trials', 0)})"
+        )
+        return models, feature_cols, league_codes
+
+    # v1.5 single model format (backward compat)
+    if "model" in saved:
+        log.info("Wczytano model w formacie v1.5 (single XGBoost). "
+                 "Retrenuj żeby uaktualnić do ensemble v1.6.")
+        return [saved["model"]], feature_cols, league_codes
+
+    log.error("Nieznany format modelu w pkl. Uruchom: python main.py train")
+    return None
 
 
 def load_latest_odds() -> list:
@@ -39,15 +79,10 @@ def load_latest_odds() -> list:
         return json.load(f)
 
 
-def _best_odds(bookmakers: list, home_team: str, away_team: str) -> tuple[float, float, float]:
-    """
-    Wyciąga najlepsze dostępne kursy 1X2 ze wszystkich bukmacherów.
-    Zwraca (odds_h, odds_d, odds_a). Przy braku danych zwraca (2.0, 3.5, 4.0).
-
-    Uwaga: fallback 'else' przypisuje outcome do away gdy nazwa nie pasuje
-    ani do home_team ani do "Draw". Przy dobrym name_mapping to bezpieczne,
-    ale warto monitorować logi na "Brak mapowania".
-    """
+def _best_odds(
+    bookmakers: list, home_team: str, away_team: str
+) -> tuple[float, float, float]:
+    """Najlepsze dostępne kursy 1X2 ze wszystkich bukmacherów."""
     best_h = best_d = best_a = 0.0
 
     for bm in bookmakers:
@@ -72,10 +107,7 @@ def _best_odds(bookmakers: list, home_team: str, away_team: str) -> tuple[float,
 
 
 def _parse_odds_to_upcoming(events: list) -> list[dict]:
-    """
-    Parsuje listę eventów z The Odds API do formatu oczekiwanego
-    przez compute_features_upcoming().
-    """
+    """Parsuje eventy z The Odds API do formatu compute_features_upcoming()."""
     upcoming = []
     now      = datetime.now(timezone.utc)
 
@@ -122,13 +154,17 @@ def predict_matches() -> list:
     """
     Generuje predykcje dla wszystkich nadchodzących meczów.
 
-    Returns:
-        Lista słowników z prawdopodobieństwami modelu i rynku.
+    v1.6: proba = mean([model.predict_proba(X) for model in models])
+    Backward compat: działa też ze starym single-model pkl.
+
+    Returns
+    -------
+    Lista słowników z prawdopodobieństwami modelu i rynku.
     """
     loaded = load_model()
     if not loaded:
         return []
-    model, feature_cols, league_codes = loaded
+    models, feature_cols, league_codes = loaded
 
     df_hist         = pd.read_csv(f"{DATA_RAW}/all_matches.csv")
     df_hist["Date"] = pd.to_datetime(df_hist["Date"], errors="coerce")
@@ -147,16 +183,18 @@ def predict_matches() -> list:
         log.warning("Brak features do predykcji!")
         return []
 
-    X     = features_df[FEATURE_COLS].fillna(0)
-    proba = model.predict_proba(X)
+    X = features_df[FEATURE_COLS].fillna(0)
+
+    # Ensemble: uśrednij skalibrowane prawdopodobieństwa
+    proba = np.mean([m.predict_proba(X) for m in models], axis=0)
 
     results = []
     for i, match in enumerate(upcoming):
         if i >= len(proba):
             break
 
-        odds_h, odds_d, odds_a   = match["odds_h"], match["odds_d"], match["odds_a"]
-        mkt_h, mkt_d, mkt_a     = remove_margin(odds_h, odds_d, odds_a)
+        odds_h, odds_d, odds_a = match["odds_h"], match["odds_d"], match["odds_a"]
+        mkt_h, mkt_d, mkt_a   = remove_margin(odds_h, odds_d, odds_a)
 
         results.append({
             "match_id":         match["match_id"],
