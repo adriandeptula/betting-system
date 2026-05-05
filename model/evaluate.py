@@ -5,19 +5,17 @@ Automatyczne rozliczanie kuponów i śledzenie ROI.
 Dwa niezależne systemy:
   Model ROI  – mierzy jakość modelu niezależnie od gracza.
                Kupony rozliczane automatycznie przez The Odds API /scores.
-               Stawki per kupon śledzone dokładnie (nie przez proporcję).
+               Stawki per kupon śledzone dokładnie (nie przez proporcję całości).
 
   Player ROI – mierzy rzeczywisty P&L gracza.
                Stawki: /stake [nr] [kwota]  (osobno na każdy kupon)
                Wypłaty: /won [nr] [kwota]   (gracz podaje rzeczywistą wypłatę)
                Podstawa: finance.json
 
-v1.5 poprawki:
-  - update_coupon_results(): ROI liczony na stawkach WON+LOST (nie proporcja całości)
-    Poprzednio: staked_resolved = total_staked * (resolved/total) — błąd przy
-    różnych stawkach Kelly. Teraz: każdy kupon śledzi stawkę per status.
-  - auto_resolve_pending_coupons(): dynamiczny days_back (max 14) zamiast
-    hardcoded 7 — kupony nie gną przy >7 dniach przerwy Actions.
+v1.6 zmiany:
+  - update_coupon_results(): zwraca też statystyki CLV (avg_clv, clv_legs, clv_positive_pct)
+    CLV dane pobierane z pipeline/fetch_clv.py (zero dodatkowych API calls)
+  - auto_resolve_pending_coupons(): loguje info o CLV po rozliczeniu
 """
 import json
 import logging
@@ -78,8 +76,8 @@ def _build_result_lookups(league_keys: set, days_back: int) -> tuple[dict, dict]
     """
     from pipeline.name_mapping import normalize
 
-    results_by_id:    dict[str, str]                = {}
-    results_by_teams: dict[tuple[str, str], str]    = {}
+    results_by_id:    dict[str, str]             = {}
+    results_by_teams: dict[tuple[str, str], str] = {}
 
     for odds_key in league_keys:
         scores = fetch_results(odds_key, days_back=days_back)
@@ -131,10 +129,6 @@ def _resolve_coupon_status(
     """
     Wyznacza aktualny status kuponu na podstawie wyników.
     Zwraca: 'WON' | 'LOST' | 'PENDING'
-
-    Parlay wygrywa gdy WSZYSTKIE nogi wygrały.
-    Parlay przegrywa gdy JAKAKOLWIEK noga przegrała (wynik znany).
-    Pozostaje PENDING jeśli którakolwiek noga nie ma jeszcze wyniku.
     """
     legs = coupon.get("legs", [])
     if not legs:
@@ -168,10 +162,7 @@ def _resolve_coupon_status(
 # ── Auto-rozliczanie ──────────────────────────────────────────────────────────
 
 def _compute_dynamic_days_back(history: list, max_days: int = 14) -> int:
-    """
-    Oblicza ile dni wstecz szukać wyników, zależnie od wieku najstarszego
-    PENDING kuponu. Chroni przed sytuacją gdy Actions nie działało przez >7 dni.
-    """
+    """Oblicza ile dni wstecz szukać wyników, zależnie od wieku najstarszego PENDING."""
     oldest: datetime | None = None
     for entry in history:
         for coupon in entry.get("coupons", []):
@@ -187,7 +178,7 @@ def _compute_dynamic_days_back(history: list, max_days: int = 14) -> int:
     if oldest is None:
         return 7
 
-    days_since = (datetime.now() - oldest).days + 2   # +2 dni buforu
+    days_since = (datetime.now() - oldest).days + 2
     return min(max_days, max(7, days_since))
 
 
@@ -199,8 +190,8 @@ def auto_resolve_pending_coupons() -> int:
       - w run_stats() (weekly_retrain, poniedziałek)
       - w poll_and_respond() (bot_polling, co godzinę)
 
-    days_back obliczany dynamicznie na podstawie wieku najstarszego PENDING
-    kuponu — gwarantuje rozliczenie nawet po dłuższej przerwie Actions.
+    days_back obliczany dynamicznie — gwarantuje rozliczenie nawet po
+    dłuższej przerwie Actions.
 
     Zwraca liczbę nowo rozliczonych kuponów.
     """
@@ -256,10 +247,20 @@ def auto_resolve_pending_coupons() -> int:
                 coupon["result"]      = new_status
                 coupon["resolved_at"] = datetime.now().isoformat()
                 resolved += 1
+
+                # Podsumowanie CLV dla rozliczonego kuponu (jeśli dostępne)
+                clv_parts = [
+                    f"CLV={leg['clv_pct']:+.1f}%"
+                    for leg in coupon.get("legs", [])
+                    if leg.get("clv_pct") is not None
+                ]
+                clv_str = f"  [{', '.join(clv_parts)}]" if clv_parts else ""
+
                 log.info(
                     f"  [{new_status}] {coupon.get('type','?')} "
                     f"@ {coupon.get('total_odds', '?')} "
                     f"(stawka Kelly: {coupon.get('stake', '?')} PLN)"
+                    f"{clv_str}"
                 )
 
     with open(history_path, "w", encoding="utf-8") as f:
@@ -273,15 +274,10 @@ def auto_resolve_pending_coupons() -> int:
 
 def update_coupon_results() -> dict:
     """
-    Rozlicza kupony i oblicza Model ROI.
+    Rozlicza kupony i oblicza Model ROI + statystyki CLV.
 
-    POPRAWKA v1.5: ROI liczony na rzeczywistych stawkach WON i LOST kuponów
-    (nie przez proporcję całości). Przy różnych stawkach Kelly poprzednie
-    podejście (total_staked * resolved/total) było matematycznie błędne.
-
-    Model ROI ≠ Player ROI.
-    Model ROI używa sugerowanych stawek Kelly z coupons_history.json.
-    Player ROI (finance.py) używa rzeczywistych stawek gracza.
+    v1.6: zwracany słownik zawiera też clv_avg, clv_legs, clv_positive_pct.
+    CLV pobierane z pipeline/fetch_clv.get_clv_summary() — zero API calls.
     """
     auto_resolve_pending_coupons()
 
@@ -302,12 +298,12 @@ def update_coupon_results() -> dict:
             result      = coupon.get("result", "PENDING")
 
             if result == "WON":
-                stats["won"]               += 1
-                stats["staked_resolved"]   += model_stake
+                stats["won"]                += 1
+                stats["staked_resolved"]    += model_stake
                 stats["total_model_return"] += model_stake * float(coupon.get("total_odds", 1))
             elif result == "LOST":
-                stats["lost"]             += 1
-                stats["staked_resolved"]  += model_stake
+                stats["lost"]            += 1
+                stats["staked_resolved"] += model_stake
             else:
                 stats["pending"] += 1
 
@@ -317,6 +313,16 @@ def update_coupon_results() -> dict:
             / stats["staked_resolved"] * 100
         )
 
+    # CLV statystyki (zero dodatkowych API calls)
+    try:
+        from pipeline.fetch_clv import get_clv_summary
+        clv = get_clv_summary()
+        stats["clv_avg"]          = clv["avg_clv"]
+        stats["clv_legs"]         = clv["legs_with_clv"]
+        stats["clv_positive_pct"] = clv["positive_clv_pct"]
+    except Exception as e:
+        log.warning(f"Nie udało się załadować statystyk CLV: {e}")
+
     log.info("─── MODEL ROI (sugerowane stawki Kelly) ─────────")
     log.info(f"Łącznie kuponów:  {stats['total_coupons']}")
     log.info(f"  WON:     {stats['won']}")
@@ -325,6 +331,12 @@ def update_coupon_results() -> dict:
     log.info(f"  Postawiono (rozliczone): {stats['staked_resolved']:.0f} PLN")
     log.info(f"  Zwrot (WON):             {stats['total_model_return']:.0f} PLN")
     log.info(f"Model ROI: {stats['model_roi']:.1f}%")
+    if stats.get("clv_legs", 0) > 0:
+        log.info(
+            f"CLV: avg={stats['clv_avg']:+.2f}% "
+            f"(+CLV: {stats['clv_positive_pct']:.0f}%, "
+            f"n={stats['clv_legs']})"
+        )
     log.info("─────────────────────────────────────────────────")
 
     Path(DATA_RESULTS).mkdir(parents=True, exist_ok=True)
@@ -342,19 +354,19 @@ def _empty_stats() -> dict:
         "won":                0,
         "lost":               0,
         "pending":            0,
-        "staked_resolved":    0.0,   # stawki tylko WON + LOST
+        "staked_resolved":    0.0,
         "total_model_return": 0.0,
         "model_roi":          0.0,
+        "clv_avg":            0.0,
+        "clv_legs":           0,
+        "clv_positive_pct":   0.0,
     }
 
 
 # ── Kupony oczekujące (dla bota) ──────────────────────────────────────────────
 
 def get_pending_summary() -> dict:
-    """
-    Zwraca podsumowanie PENDING kuponów z ich numerami.
-    Numery kuponów: sekwencyjny indeks w historii (1, 2, 3...).
-    """
+    """Zwraca podsumowanie PENDING kuponów z ich numerami."""
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
     if not history_path.exists():
         return {"count": 0, "total_staked_model": 0.0, "potential_return": 0.0, "legs_summary": []}
