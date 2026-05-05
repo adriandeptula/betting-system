@@ -6,5 +6,8 @@
   "staked_resolved": 0.0,
   "total_model_return": 0.0,
   "model_roi": 0.0,
-  "updated_at": "2026-05-04T07:46:01.992453"
+  "clv_avg": 0.0,
+  "clv_legs": 0,
+  "clv_positive_pct": 0.0,
+  "updated_at": "2026-05-05T17:59:38.530211"
 }
