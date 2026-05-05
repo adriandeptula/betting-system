@@ -2,7 +2,6 @@ name: Daily Data Fetch
 
 on:
   schedule:
-    # Codziennie o 6:00 UTC (7:00 CET / 8:00 CEST)
     - cron: '0 6 * * *'
   workflow_dispatch:
 
