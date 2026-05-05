@@ -2,9 +2,10 @@
 config.py – Centralna konfiguracja systemu.
 Wszystkie parametry w jednym miejscu.
 
-v1.5 zmiany:
-  - SEASONS obliczane dynamicznie na podstawie daty (koniec hardcoded "2526")
-  - TAX_THRESHOLD_PLN udokumentowany
+v1.6 zmiany:
+  - CLV_CLOSING_HOURS: ile godzin przed meczem kursy traktujemy jako closing
+  - OPTUNA_TRIALS: liczba prób tuningu hiperparametrów (0 = wyłączone)
+  - DRAW_CLASS_WEIGHT: waga remisów w treningu (>1 = lepiej kalibrowany remis)
 """
 import os
 from datetime import date as _date
@@ -46,13 +47,9 @@ LEAGUES = {
 
 
 # ── Sezony historyczne ───────────────────────────────────────────────────────
-# Obliczane dynamicznie: ostatnie 5 sezonów + bieżący.
-# Format football-data.co.uk: "2425" = sezon 2024/25.
-# Sezon piłkarski zaczyna się w lipcu/sierpniu.
 def _build_seasons(n_historical: int = 4) -> list[str]:
-    today   = _date.today()
-    # Jeśli jesteśmy po lipcu — bieżący sezon kończy się w przyszłym roku
-    end_yr  = today.year + 1 if today.month >= 7 else today.year
+    today  = _date.today()
+    end_yr = today.year + 1 if today.month >= 7 else today.year
     seasons = []
     for end in range(end_yr - n_historical, end_yr + 1):
         s = str(end - 1)[-2:] + str(end)[-2:]
@@ -64,8 +61,6 @@ SEASONS: list[str] = _build_seasons(n_historical=4)
 
 
 # ── API – The Odds API ───────────────────────────────────────────────────────
-# 3 klucze (3 konta) – system automatycznie przełącza się na kolejny
-# gdy bieżący wyczerpie limit requestów (darmowy tier: 500/miesiąc/konto).
 ODDS_API_KEYS: list[str] = [
     k for k in [
         os.environ.get("ODDS_API_KEY",   ""),
@@ -107,33 +102,46 @@ if BANKROLL <= 0:
 
 
 # ── Podatek od wygranych (Polska) ─────────────────────────────────────────────
-# 12 % podatek od gier wliczony w overround – remove_margin() go eliminuje.
-# 10 % podatek zryczałtowany: pobierany gdy jednorazowa wygrana > 2280 PLN.
-# Przy obecnych parametrach (BANKROLL ≤ 15 000 PLN, MAX_BET_PCT=3 %,
-# MAX_ODDS=3.20) max wygrana ≈ 30 * 3.20 = 96 PLN – próg nieosiągalny.
-# Dla bankrollu > 15 000 PLN uwzględnij korektę w kelly_stake (v1.5 TODO).
 TAX_THRESHOLD_PLN = 2280.0
 
 
 # ── Elo rating ────────────────────────────────────────────────────────────────
-ELO_START = 1500  # Startowy rating dla nowych drużyn
-ELO_K     = 20    # Współczynnik K (standard piłka nożna)
-# Elo obliczany OSOBNO per liga — unikamy cross-league contamination.
-# Każda liga ma niezależną skalę ratingów, co jest poprawne dopóki
-# drużyny nie grają między ligami (puchar UEFA – v2.0).
+ELO_START = 1500
+ELO_K     = 20
 
 
 # ── Zakresy kursów ────────────────────────────────────────────────────────────
-MIN_ODDS          = 1.50  # Min kurs na nogę 1X2
-MAX_ODDS          = 3.20  # Max kurs 1X2 (unikamy longshots)
-DC_MIN_ODDS       = 1.20  # Min kurs double chance
-DC_MAX_ODDS       = 2.00  # Max kurs double chance
-DC_MIN_MODEL_PROB = 0.55  # Min pewność dla double chance
+MIN_ODDS          = 1.50
+MAX_ODDS          = 3.20
+DC_MIN_ODDS       = 1.20
+DC_MAX_ODDS       = 2.00
+DC_MIN_MODEL_PROB = 0.55
 
 
 # ── Kupon – ogólne ────────────────────────────────────────────────────────────
-MAX_LEGS         = 3  # Max nogi w jednym parlayach
-COUPONS_PER_WEEK = 3  # Ile kuponów tygodniowo
+MAX_LEGS         = 3
+COUPONS_PER_WEEK = 3
+
+
+# ── CLV (Closing Line Value) ──────────────────────────────────────────────────
+# Ile godzin przed meczem traktujemy aktualne kursy jako "closing odds".
+# Codzienny fetch o 06:00 UTC → dla meczów wieczornych (~20:00) to ~14h
+# przed kick-offem: wystarczające do pomiaru CLV bez dodatkowych API calls.
+CLV_CLOSING_HOURS = 24
+
+
+# ── Optuna hyperparameter tuning ──────────────────────────────────────────────
+# Liczba prób Optuna z expanding window CV (TimeSeriesSplit n_splits=3).
+# 30 trials × 3 folds ≈ 10-15 min na GitHub Actions.
+# Ustaw 0 żeby wyłączyć tuning i używać domyślnych parametrów XGBoost.
+# Ustaw 50-100 lokalnie jeśli masz więcej czasu.
+OPTUNA_TRIALS = 30
+
+
+# ── Waga klasy remis w treningu ───────────────────────────────────────────────
+# Remisy są trudne do przewidzenia i rzadsze w danych.
+# Waga > 1.0 poprawia kalibrację dla klasy D bez przekalibrowania H/A.
+DRAW_CLASS_WEIGHT = 1.5
 
 
 # ── Ścieżki plików ────────────────────────────────────────────────────────────
