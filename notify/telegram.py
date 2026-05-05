@@ -1,6 +1,9 @@
 """
 notify/telegram.py
 Wysyła kupony i alerty przez Telegram Bot API.
+
+v1.6 zmiany:
+  - send_stats(): sekcja CLV (avg_clv, clv_positive_pct, clv_legs)
 """
 import logging
 from datetime import datetime
@@ -17,7 +20,6 @@ _API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 def send_message(text: str) -> bool:
     """
     Wysyła wiadomość na Telegram. Zwraca True przy sukcesie.
-
     W trybie developerskim (brak tokenu) wypisuje na konsolę.
     """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -64,7 +66,7 @@ def _confidence_bar(prob: float) -> str:
 def format_coupon(coupon: dict, index: int) -> str:
     """
     Formatuje kupon do wiadomości HTML dla Telegrama.
-    Numer #index widoczny w nagłówku – gracz używa go w /stake i /won.
+    Numer #index widoczny w nagłówku — gracz używa go w /stake i /won.
     """
     league_names = {code: info["name"] for code, info in LEAGUES.items()}
     emoji        = _type_emoji(coupon["type"])
@@ -107,13 +109,7 @@ def format_coupon(coupon: dict, index: int) -> str:
 
 
 def send_coupons(coupons: list, first_coupon_index: int = 1) -> None:
-    """
-    Wysyła wszystkie kupony na Telegram.
-
-    Args:
-        coupons:            lista kuponów z builder.py
-        first_coupon_index: globalny numer pierwszego kuponu w tej wysyłce
-    """
+    """Wysyła wszystkie kupony na Telegram."""
     date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     if not coupons:
@@ -159,9 +155,15 @@ def send_alert(message: str) -> None:
 
 
 def send_stats(stats: dict) -> None:
-    """Wysyła cotygodniowe statystyki Model ROI."""
+    """
+    Wysyła cotygodniowe statystyki Model ROI + CLV.
+
+    v1.6: dodana sekcja CLV gdy clv_legs >= 5.
+    CLV > 0 średnio = model ma rzeczywisty edge nad rynkiem (niezależnie od wyników).
+    """
     roi_emoji = "📈" if stats.get("model_roi", 0) >= 0 else "📉"
-    send_message(
+
+    msg = (
         f"📊 <b>MODEL ROI — STATYSTYKI</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Łącznie kuponów:     {stats.get('total_coupons', 0)}\n"
@@ -172,6 +174,27 @@ def send_stats(stats: dict) -> None:
         f"💰 Postawiono (rozl.): <b>{stats.get('staked_resolved', 0):.0f} PLN</b>\n"
         f"💵 Zwrot (WON):        <b>{stats.get('total_model_return', 0):.0f} PLN</b>\n"
         f"{roi_emoji} Model ROI:          <b>{stats.get('model_roi', 0):.1f}%</b>\n"
+    )
+
+    clv_legs = stats.get("clv_legs", 0)
+    if clv_legs >= 5:
+        clv_avg   = stats.get("clv_avg", 0.0)
+        clv_pos   = stats.get("clv_positive_pct", 0.0)
+        clv_emoji = "🟢" if clv_avg > 0 else ("🟡" if clv_avg > -1 else "🔴")
+        msg += (
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📐 <b>CLV (Closing Line Value)</b>\n"
+            f"{clv_emoji} Średnie CLV:     <b>{clv_avg:+.2f}%</b>\n"
+            f"📊 Dodatnie CLV:   <b>{clv_pos:.0f}%</b> nóg\n"
+            f"📋 Próbek CLV:     {clv_legs}\n"
+            "<i>CLV &gt; 0% długoterminowo = model ma edge nad rynkiem</i>\n"
+        )
+    elif clv_legs > 0:
+        msg += f"📐 CLV: {clv_legs} nóg (potrzeba ≥5 do analizy)\n"
+
+    msg += (
         "<i>(sugerowane stawki Kelly, nie rzeczywiste gracza)\n"
         "Użyj /balance żeby zobaczyć swój rzeczywisty P&amp;L.</i>"
     )
+
+    send_message(msg)
