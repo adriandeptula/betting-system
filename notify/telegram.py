@@ -180,7 +180,7 @@ def send_stats(stats: dict) -> None:
     if clv_legs >= 5:
         clv_avg   = stats.get("clv_avg", 0.0)
         clv_pos   = stats.get("clv_positive_pct", 0.0)
-        clv_emoji = "🟢" if clv_avg > 0 else ("🟡" if clv_avg > -1 else "🔴")
+        clv_emoji = "🟢" if clv_avg >= 1.0 else ("🟡" if clv_avg >= 0 else "🔴")
         msg += (
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📐 <b>CLV (Closing Line Value)</b>\n"
@@ -198,3 +198,101 @@ def send_stats(stats: dict) -> None:
     )
 
     send_message(msg)
+
+
+def format_resolved_notification(resolved: list[dict]) -> str:
+    """
+    Formatuje powiadomienie o automatycznie rozliczonych kuponach.
+
+    Args:
+        resolved: lista slownikow z auto_resolve_pending_coupons()
+                  [{coupon_nr, type, result, total_odds, stake, payout, legs, clv_parts}]
+
+    Przyklad wyjscia:
+      🤖 Auto-rozliczono 2 kupony
+
+      ✅ #3 SINGIEL @ 2.10
+         Man City vs Arsenal → H (wygrana gosp.)
+         Kelly: 30 PLN | Zwrot: 63 PLN
+         CLV: +2.4%
+
+      ❌ #4 PODWOJNY @ 5.20
+         Liverpool vs Chelsea → A
+         Dortmund vs Bayern → H
+         Kelly: 20 PLN
+    """
+    if not resolved:
+        return ""
+
+    won  = [r for r in resolved if r["result"] == "WON"]
+    lost = [r for r in resolved if r["result"] == "LOST"]
+
+    lines = [f"🤖 <b>Auto-rozliczono {len(resolved)} {'kupon' if len(resolved) == 1 else 'kupony' if len(resolved) < 5 else 'kuponow'}</b>"]
+
+    for r in resolved:
+        nr         = r["coupon_nr"]
+        result     = r["result"]
+        coupon_type = r["type"]
+        odds       = r["total_odds"]
+        stake      = r["stake"]
+        payout     = r["payout"]
+        clv_parts  = r.get("clv_parts", [])
+
+        emoji = "✅" if result == "WON" else "❌"
+        lines.append("")
+        lines.append(f"{emoji} <b>#{nr} {coupon_type} @ {odds:.2f}</b>")
+
+        # Nogi kuponu
+        for leg in r.get("legs", []):
+            home    = leg.get("home_team", "?")[:14]
+            away    = leg.get("away_team", "?")[:14]
+            outcome = leg.get("bet_outcome", "?")
+            label   = leg.get("bet_label", outcome)
+            lines.append(f"   {home} vs {away} → <b>{label}</b>")
+
+        # Finansowe
+        if result == "WON":
+            lines.append(f"   💰 Kelly: {stake:.0f} PLN | Zwrot: <b>{payout:.0f} PLN</b> (+{payout - stake:.0f})")
+        else:
+            lines.append(f"   💸 Kelly: {stake:.0f} PLN | Strata: -{stake:.0f} PLN")
+
+        # CLV jesli dostepne
+        if clv_parts:
+            clv_str = " | ".join(clv_parts)
+            lines.append(f"   📐 CLV: {clv_str}")
+
+    # Podsumowanie finansowe
+    if len(resolved) > 1:
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        total_stake  = sum(r["stake"]  for r in resolved)
+        total_payout = sum(r["payout"] for r in resolved)
+        net          = total_payout - total_stake
+        net_emoji    = "✅" if net >= 0 else "❌"
+        lines.append(f"{net_emoji} Bilans tej sesji: <b>{net:+.0f} PLN</b>")
+        lines.append(f"   Wygrane: {len(won)} | Przegrane: {len(lost)}")
+
+    return "\n".join(lines)
+
+
+def send_resolved_notification(resolved: list[dict], summary: dict, pending: dict | None = None) -> None:
+    """
+    Wysyla pelne powiadomienie po auto-rozliczeniu kuponow.
+
+    Args:
+        resolved: lista z auto_resolve_pending_coupons()
+        summary:  slownik z finance.get_summary()
+        pending:  slownik z evaluate.get_pending_summary() (opcjonalny)
+    """
+    from notify.finance import format_summary_message
+
+    if not resolved:
+        return
+
+    # Najpierw szczegoly rozliczonych kuponow
+    details_msg = format_resolved_notification(resolved)
+    if details_msg:
+        send_message(details_msg)
+
+    # Potem aktualny stan finansowy
+    send_message(format_summary_message(summary, pending))
