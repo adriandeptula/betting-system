@@ -4,36 +4,90 @@ Automatyczne rozliczanie kuponow i sledzenie ROI.
 
 v1.6 zmiany:
   - auto_resolve_pending_coupons(): zwraca list[dict] zamiast int
-    Kazdy element zawiera: coupon_nr, type, result, total_odds, stake,
-    payout, legs, clv_parts — uzywane do bogatego powiadomienia Telegram
-  - update_coupon_results(): obsluguje nowy typ zwracany
+  - update_coupon_results(): zawiera statystyki CLV
+
+v1.6.1 poprawki:
+  - fetch_results(): The Odds API free tier akceptuje daysFrom max 3.
+    Poprzednio wysylalismy daysFrom=14 -> 422 Unprocessable Entity na
+    wszystkich ligach -> zero rozliczen. Teraz: cap na ODDS_API_SCORES_MAX_DAYS
+    z retry fallback 3->2->1 przy 422.
+  - _compute_dynamic_days_back(): loguje ostrzezenie gdy sa PENDING kupony
+    starsze niz ODDS_API_SCORES_MAX_DAYS (wymagaja recznego /won lub /lost).
 """
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import DATA_RESULTS, LEAGUES, ODDS_API_BASE, ODDS_API_KEYS
+from config import (
+    DATA_RESULTS, LEAGUES, ODDS_API_BASE, ODDS_API_KEYS,
+    ODDS_API_SCORES_MAX_DAYS,
+)
 
 log = logging.getLogger(__name__)
 
 
 # ── Pobieranie wynikow z The Odds API ────────────────────────────────────────
 
-def fetch_results(league_key: str, days_back: int = 7) -> list:
+def fetch_results(league_key: str, days_back: int = 3) -> list:
+    """
+    Pobiera wyniki zakończonych meczów z The Odds API /scores.
+
+    Free tier: daysFrom max 3. Przy 422 robi retry z mniejszą wartością.
+    Przy wyczerpaniu kluczy lub innych błędach zwraca [].
+
+    Parametry
+    ---------
+    days_back : liczba dni wstecz — zostanie przycięta do ODDS_API_SCORES_MAX_DAYS
+    """
     if not ODDS_API_KEYS:
         log.warning("Brak kluczy API – pomijam pobieranie wynikow.")
         return []
 
+    # Cap na API maximum — free tier nie przyjmie wartości > 3
+    capped = min(days_back, ODDS_API_SCORES_MAX_DAYS)
+    if capped < days_back:
+        log.debug(
+            f"days_back={days_back} przycięte do {capped} "
+            f"(ODDS_API_SCORES_MAX_DAYS={ODDS_API_SCORES_MAX_DAYS})"
+        )
+
     from pipeline.api_utils import api_get
-    url    = f"{ODDS_API_BASE}/sports/{league_key}/scores"
-    params = {"daysFrom": days_back, "dateFormat": "iso"}
-    try:
-        data, _ = api_get(url=url, keys=ODDS_API_KEYS, params=params, key_param="apiKey")
-        return data if isinstance(data, list) else []
-    except Exception as e:
-        log.warning(f"Blad pobierania wynikow {league_key}: {e}")
-        return []
+    url = f"{ODDS_API_BASE}/sports/{league_key}/scores"
+
+    # Retry: próbuj od capped w dół (3 → 2 → 1) przy 422
+    for attempt_days in range(capped, 0, -1):
+        params = {"daysFrom": attempt_days, "dateFormat": "iso"}
+        try:
+            data, _ = api_get(
+                url=url, keys=ODDS_API_KEYS, params=params, key_param="apiKey"
+            )
+            if isinstance(data, list):
+                log.debug(f"{league_key}: {len(data)} wynikow (daysFrom={attempt_days})")
+                return data
+            return []
+        except RuntimeError:
+            # Wszystkie klucze wyczerpane
+            raise
+        except Exception as e:
+            err_str = str(e)
+            if "422" in err_str:
+                if attempt_days > 1:
+                    log.warning(
+                        f"{league_key}: 422 dla daysFrom={attempt_days}, "
+                        f"próbuję daysFrom={attempt_days - 1}..."
+                    )
+                    continue
+                else:
+                    log.error(
+                        f"{league_key}: 422 nawet dla daysFrom=1. "
+                        "Sprawdź plan The Odds API lub poprawność klucza."
+                    )
+                    return []
+            log.warning(f"Błąd pobierania wynikow {league_key}: {e}")
+            return []
+
+    return []
 
 
 # ── Logika rozliczania ────────────────────────────────────────────────────────
@@ -59,6 +113,11 @@ def _leg_won(ftr: str, bet_outcome: str) -> bool:
 
 
 def _build_result_lookups(league_keys: set, days_back: int) -> tuple[dict, dict]:
+    """
+    Pobiera wyniki dla podanych lig i buduje dwa slowniki wyszukiwania:
+      results_by_id    : {match_id: ftr}
+      results_by_teams : {(home_norm_lower, away_norm_lower): ftr}
+    """
     from pipeline.name_mapping import normalize
 
     results_by_id:    dict[str, str]             = {}
@@ -111,6 +170,7 @@ def _resolve_coupon_status(
     results_by_id: dict,
     results_by_teams: dict,
 ) -> str:
+    """Wyznacza status kuponu. Zwraca 'WON' | 'LOST' | 'PENDING'."""
     legs = coupon.get("legs", [])
     if not legs:
         return "PENDING"
@@ -134,15 +194,19 @@ def _resolve_coupon_status(
         if not _leg_won(ftr, bet_outcome):
             return "LOST"
 
-    if any_pending:
-        return "PENDING"
-
-    return "WON"
+    return "PENDING" if any_pending else "WON"
 
 
 # ── Auto-rozliczanie ──────────────────────────────────────────────────────────
 
-def _compute_dynamic_days_back(history: list, max_days: int = 14) -> int:
+def _compute_dynamic_days_back(history: list) -> int:
+    """
+    Oblicza ile dni wstecz szukać wyników.
+
+    Zawsze zwraca ODDS_API_SCORES_MAX_DAYS (domyślnie 3) — tyle akceptuje
+    free tier The Odds API. Loguje ostrzeżenie gdy są PENDING kupony starsze
+    niż ODDS_API_SCORES_MAX_DAYS dni (wymagają ręcznego /won lub /lost).
+    """
     oldest: datetime | None = None
     for entry in history:
         for coupon in entry.get("coupons", []):
@@ -156,10 +220,19 @@ def _compute_dynamic_days_back(history: list, max_days: int = 14) -> int:
                 continue
 
     if oldest is None:
-        return 7
+        return ODDS_API_SCORES_MAX_DAYS
 
-    days_since = (datetime.now() - oldest).days + 2
-    return min(max_days, max(7, days_since))
+    days_since = (datetime.now() - oldest).days
+
+    if days_since > ODDS_API_SCORES_MAX_DAYS:
+        log.warning(
+            f"Najstarszy PENDING kupon ma {days_since} dni. "
+            f"The Odds API free tier zwraca wyniki max {ODDS_API_SCORES_MAX_DAYS} dni wstecz. "
+            f"Kupony starsze niz {ODDS_API_SCORES_MAX_DAYS} dni wymagaja recznego "
+            f"rozliczenia przez /won lub /lost."
+        )
+
+    return ODDS_API_SCORES_MAX_DAYS
 
 
 def auto_resolve_pending_coupons() -> list[dict]:
@@ -167,16 +240,7 @@ def auto_resolve_pending_coupons() -> list[dict]:
     Pobiera wyniki z The Odds API i automatycznie rozlicza PENDING kupony.
 
     Zwraca liste slownikow z detalami rozliczonych kuponow:
-      [{
-        "coupon_nr":  3,          <- globalny numer kuponu
-        "type":       "SINGIEL",
-        "result":     "WON",
-        "total_odds": 2.10,
-        "stake":      30.0,
-        "payout":     63.0,       <- stake * odds (tylko WON, inaczej 0)
-        "legs":       [...],
-        "clv_parts":  ["+2.4%"],  <- CLV per noga jesli dostepne
-      }, ...]
+      [{coupon_nr, type, result, total_odds, stake, payout, legs, clv_parts}]
     """
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
     if not history_path.exists():
@@ -204,7 +268,8 @@ def auto_resolve_pending_coupons() -> list[dict]:
     days_back = _compute_dynamic_days_back(history)
     log.info(
         f"Auto-resolve: {len(pending_coupons)} PENDING kuponow, "
-        f"{len(league_keys)} lig, days_back={days_back}"
+        f"{len(league_keys)} lig, daysFrom={days_back} "
+        f"(API max={ODDS_API_SCORES_MAX_DAYS})"
     )
 
     if not ODDS_API_KEYS:
@@ -217,7 +282,11 @@ def auto_resolve_pending_coupons() -> list[dict]:
     results_by_id, results_by_teams = _build_result_lookups(league_keys, days_back)
 
     if not results_by_id and not results_by_teams:
-        log.warning("Nie pobrano zadnych wynikow – API moze byc niedostepne.")
+        log.warning(
+            "Nie pobrano zadnych wynikow. "
+            f"Sprawdz czy mecze odbyly sie w ciagu ostatnich {days_back} dni. "
+            "Kupony starsze wymagaja recznego /won lub /lost."
+        )
         return []
 
     # Buduj mape kupon -> globalny numer przed modyfikacja historii
@@ -275,9 +344,7 @@ def auto_resolve_pending_coupons() -> list[dict]:
 # ── Statystyki modelu (Model ROI) ─────────────────────────────────────────────
 
 def update_coupon_results() -> dict:
-    """
-    Rozlicza kupony i oblicza Model ROI + statystyki CLV.
-    """
+    """Rozlicza kupony i oblicza Model ROI + statystyki CLV."""
     auto_resolve_pending_coupons()
 
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
@@ -312,7 +379,6 @@ def update_coupon_results() -> dict:
             / stats["staked_resolved"] * 100
         )
 
-    # CLV statystyki (zero dodatkowych API calls)
     try:
         from pipeline.fetch_clv import get_clv_summary
         clv = get_clv_summary()
@@ -322,7 +388,7 @@ def update_coupon_results() -> dict:
     except Exception as e:
         log.warning(f"Nie udalo sie zaladowac statystyk CLV: {e}")
 
-    log.info("─── MODEL ROI (sugerowane stawki Kelly) ─────────")
+    log.info("─── MODEL ROI ───────────────────────────────────")
     log.info(f"Lacznie kuponow:  {stats['total_coupons']}")
     log.info(f"  WON:     {stats['won']}")
     log.info(f"  LOST:    {stats['lost']}")
@@ -332,16 +398,15 @@ def update_coupon_results() -> dict:
     log.info(f"Model ROI: {stats['model_roi']:.1f}%")
     if stats.get("clv_legs", 0) > 0:
         log.info(
-            f"CLV: avg={stats['clv_avg']:+.2f}% "
-            f"(+CLV: {stats['clv_positive_pct']:.0f}%, "
+            f"CLV: avg={stats['clv_avg']:+.2f}%  "
+            f"(+CLV: {stats['clv_positive_pct']:.0f}%,  "
             f"n={stats['clv_legs']})"
         )
     log.info("─────────────────────────────────────────────────")
 
     Path(DATA_RESULTS).mkdir(parents=True, exist_ok=True)
-    stats_path = Path(DATA_RESULTS) / "stats.json"
     stats["updated_at"] = datetime.now().isoformat()
-    with open(stats_path, "w", encoding="utf-8") as f:
+    with open(Path(DATA_RESULTS) / "stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2)
 
     return stats
@@ -365,9 +430,13 @@ def _empty_stats() -> dict:
 # ── Kupony oczekujace (dla bota) ──────────────────────────────────────────────
 
 def get_pending_summary() -> dict:
+    """Zwraca podsumowanie PENDING kuponow z ich numerami."""
     history_path = Path(DATA_RESULTS) / "coupons_history.json"
     if not history_path.exists():
-        return {"count": 0, "total_staked_model": 0.0, "potential_return": 0.0, "legs_summary": []}
+        return {
+            "count": 0, "total_staked_model": 0.0,
+            "potential_return": 0.0, "legs_summary": [],
+        }
 
     with open(history_path, encoding="utf-8") as f:
         history = json.load(f)
