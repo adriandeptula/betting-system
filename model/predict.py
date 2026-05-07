@@ -47,7 +47,6 @@ def load_model() -> tuple | None:
     if saved.get("model_type") == "ensemble":
         models     = saved["models"]
         names      = saved.get("model_names", [f"model_{i}" for i in range(len(models))])
-        n_models   = len(models)
         metrics    = saved.get("metrics", {})
         log.info(
             f"Wczytano ensemble: {' + '.join(names)} "
