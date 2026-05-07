@@ -34,7 +34,6 @@ from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
 
-import config
 from config import DATA_RAW, MODEL_PATH, DRAW_CLASS_WEIGHT, OPTUNA_TRIALS
 from model.features import FEATURE_COLS, compute_features
 
