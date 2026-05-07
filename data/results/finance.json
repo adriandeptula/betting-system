@@ -119,6 +119,20 @@
       "amount": -2.0,
       "coupon_id": "12",
       "note": "Stawka na kupon #12"
+    },
+    {
+      "date": "2026-05-07 23:06",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "30",
+      "note": "Stawka na kupon #30"
+    },
+    {
+      "date": "2026-05-07 23:06",
+      "type": "stake",
+      "amount": -2.0,
+      "coupon_id": "27",
+      "note": "Stawka na kupon #27"
     }
   ]
 }
