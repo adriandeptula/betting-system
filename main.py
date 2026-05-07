@@ -1,181 +1,323 @@
 """
-main.py – Główny orkiestrator pipeline'u.
-Uruchamiany przez GitHub Actions lub ręcznie.
+notify/bot_handler.py
+Dwukierunkowa komunikacja z Telegramem – obsługa komend.
 
-Tryby użycia:
-  python main.py fetch   – pobierz dane historyczne i aktualne kursy + update CLV
-  python main.py train   – trenuj/retrenuj model (Optuna + ensemble XGB+LGB)
-  python main.py coupon  – generuj kupony i wyślij na Telegram
-  python main.py stats   – oblicz i wyślij statystyki ROI + CLV
-  python main.py bot     – sprawdź komendy Telegram i odpowiedz
-  python main.py full    – fetch + train + coupon (pierwsze uruchomienie)
+Działa przez polling (getUpdates) uruchamiany co godzinę przez GitHub Actions.
+Każde uruchomienie:
+  1. Auto-rozlicza PENDING kupony (dynamiczny days_back)
+  2. Jeśli coś rozliczył — wysyła szczegółowe powiadomienie (nowa funkcja v1.6)
+  3. Sprawdza nowe komendy i odpowiada
 
-v1.6 zmiany:
-  - run_fetch(): po pobraniu kursów wywołuje update_clv() — zero dodatkowych API calls
-  - run_stats(): CLV summary w send_stats() gdy clv_legs >= 5
+Komendy:
+  /help              – lista komend
+  /stats             – Model ROI + CLV
+  /balance           – Player ROI
+  /pending           – kupony oczekujące
+  /setbalance X      – ustaw punkt startowy
+  /stake [nr] X      – zaloguj stawkę na kupon
+  /won [nr] X        – kupon wygrany
+  /lost [nr]         – kupon przegrany
 """
+import json
 import logging
-import sys
-import traceback
+from datetime import datetime
+from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)-25s %(levelname)s %(message)s",
+import requests
+
+from config import DATA_RESULTS, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN
+from notify.finance import (
+    add_payout,
+    add_stake,
+    format_summary_message,
+    get_summary,
+    set_initial_balance,
 )
-log = logging.getLogger("main")
+from notify.telegram import send_message, send_stats, send_resolved_notification
+
+log = logging.getLogger(__name__)
+
+OFFSET_FILE = Path(DATA_RESULTS) / "tg_offset.json"
+API_BASE    = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 
-def run_fetch() -> None:
-    log.info("══ FETCH: pobieranie danych ══════════════════════")
-    from pipeline.fetch_stats import fetch_all_stats
-    from pipeline.fetch_odds import fetch_all_odds
-    fetch_all_stats()
-    fetch_all_odds()
+# ── Telegram helpers ──────────────────────────────────────────────────────────
 
-    # CLV update — zero dodatkowych API calls, używa właśnie pobranego pliku odds
-    log.info("══ CLV: aktualizacja Closing Line Value ══════════")
+def _get_updates(offset: int = 0) -> list:
     try:
-        from pipeline.fetch_clv import update_clv
-        n = update_clv()
-        if n > 0:
-            log.info(f"✓ CLV zaktualizowane dla {n} nóg kuponów.")
-        else:
-            log.info("CLV: brak nowych nóg w closing window.")
+        resp = requests.get(
+            f"{API_BASE}/getUpdates",
+            params={"offset": offset, "timeout": 5, "allowed_updates": ["message"]},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("result", [])
     except Exception as e:
-        log.warning(f"CLV update error (nie blokuje fetcha): {e}")
+        log.warning(f"getUpdates error: {e}")
+        return []
 
 
-def run_train() -> None:
-    log.info("══ TRAIN: trening ensemble ═══════════════════════")
-    from model.train import train_model
-    train_model()
+def _load_offset() -> int:
+    if OFFSET_FILE.exists():
+        with open(OFFSET_FILE) as f:
+            return json.load(f).get("offset", 0)
+    return 0
 
 
-def run_coupon() -> None:
-    log.info("══ COUPON: generowanie kuponów ═══════════════════")
-    import json
-    from pathlib import Path
-    from model.predict import predict_matches
-    from coupon.value_engine import find_value_bets
-    from coupon.builder import build_coupons, save_coupons
-    from notify.telegram import send_coupons
-    from config import DATA_RESULTS
-
-    predictions = predict_matches()
-    if not predictions:
-        from notify.telegram import send_alert
-        send_alert("Brak predykcji! Sprawdź: dane, kursy, model.")
-        return
-
-    value_bets = find_value_bets(predictions)
-    coupons    = build_coupons(value_bets)
-
-    first_index  = 1
-    history_path = Path(DATA_RESULTS) / "coupons_history.json"
-    if history_path.exists():
-        with open(history_path, encoding="utf-8") as f:
-            history = json.load(f)
-        first_index = sum(len(e.get("coupons", [])) for e in history) + 1
-
-    save_coupons(coupons)
-    send_coupons(coupons, first_coupon_index=first_index)
+def _save_offset(offset: int) -> None:
+    OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OFFSET_FILE, "w") as f:
+        json.dump({"offset": offset, "updated": datetime.now().isoformat()}, f)
 
 
-def run_stats() -> None:
-    log.info("══ STATS: obliczanie ROI + CLV ═══════════════════")
-    from model.evaluate import update_coupon_results, get_pending_summary
-    from notify.telegram import send_stats, send_message
-    from notify.finance import get_summary, format_summary_message
+def _get_pending():
+    try:
+        from model.evaluate import get_pending_summary
+        return get_pending_summary()
+    except Exception:
+        return None
 
-    stats = update_coupon_results()
-    send_stats(stats)
 
-    s = get_summary()
-    if s["total_coupons"] > 0 or s["initial_balance"] != 0:
-        pending = get_pending_summary()
-        send_message(format_summary_message(s, pending))
+def _parse_coupon_nr_and_amount(args: str) -> tuple[str, float | None]:
+    parts = args.strip().split()
+    if len(parts) == 0:
+        return "?", None
+    if len(parts) == 1:
+        try:
+            return "?", float(parts[0].replace(",", "."))
+        except ValueError:
+            return "?", None
+    try:
+        coupon_id = parts[0]
+        amount    = float(parts[1].replace(",", "."))
+        return coupon_id, amount
+    except (ValueError, IndexError):
+        return "?", None
 
+
+def _parse_coupon_nr(args: str) -> str:
+    parts = args.strip().split()
+    return parts[0] if parts else "?"
+
+
+# ── Obsługa komend ────────────────────────────────────────────────────────────
+
+def _cmd_help() -> None:
     send_message(
-        "🎯 <b>Czas rozliczenia!</b>\n\n"
-        "Czy któryś z poprzednich kuponów wygrał?\n\n"
-        "  /won [nr] [kwota]  – np. /won 3 500\n"
-        "  /lost [nr]         – np. /lost 2\n\n"
-        "<i>Pomiń jeśli już rozliczyłeś wcześniej.\n"
-        "Użyj /pending żeby zobaczyć listę oczekujących.\n"
-        "Użyj /clv żeby sprawdzić Closing Line Value.</i>"
+        "🤖 <b>AI Betting Bot — Komendy</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>📊 Statystyki:</b>\n"
+        "  /stats           – Model ROI + CLV\n"
+        "  /balance         – Twój rzeczywisty P&amp;L\n"
+        "  /pending         – kupony czekające na wynik\n\n"
+        "<b>💰 Stawki:</b>\n"
+        "  /stake [nr] [kwota]  – postaw na kupon\n"
+        "                         np. /stake 1 100\n"
+        "                         np. /stake 2 0  (nie grasz)\n\n"
+        "<b>🎯 Wyniki:</b>\n"
+        "  /won [nr] [kwota]    – kupon wygrany\n"
+        "                         np. /won 1 350\n"
+        "  /lost [nr]           – kupon przegrany\n"
+        "                         np. /lost 2\n\n"
+        "<b>⚙️ Ustawienia:</b>\n"
+        "  /setbalance X    – punkt startowy\n"
+        "                     np. /setbalance -1500\n\n"
+        "<i>Nr kuponu widoczny w każdej wiadomości z kuponem (#1, #2, #3).</i>"
     )
 
 
-def run_bot() -> None:
-    log.info("══ BOT: polling Telegram ═════════════════════════")
-    from notify.bot_handler import poll_and_respond
-    n = poll_and_respond()
-    log.info(f"Przetworzono {n} komend")
+def _cmd_stats() -> None:
+    from model.evaluate import update_coupon_results
+    stats = update_coupon_results()
+    send_stats(stats)
 
 
-def run_resolve() -> None:
+def _cmd_balance() -> None:
+    s       = get_summary()
+    pending = _get_pending()
+    send_message(format_summary_message(s, pending))
+
+
+def _cmd_pending() -> None:
+    pending = _get_pending()
+    if not pending or pending["count"] == 0:
+        send_message("✅ Brak kuponów oczekujących na rozliczenie.")
+        return
+    p   = pending
+    msg = (
+        f"⏳ <b>Kupony oczekujące: {p['count']}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    for leg in p["legs_summary"]:
+        msg += f"  • <code>{leg}</code>\n"
+    msg += (
+        f"\n🎲 Sug. stawka Kelly:  <b>{p['total_staked_model']:.0f} PLN</b>\n"
+        f"🏆 Potencjalny zwrot: <b>{p['potential_return']:.0f} PLN</b>\n\n"
+        f"<i>Użyj /won [nr] [kwota] lub /lost [nr] aby rozliczyć.</i>"
+    )
+    send_message(msg)
+
+
+def _cmd_setbalance(args: str) -> None:
+    try:
+        amount  = float(args.strip().replace(",", "."))
+        s       = set_initial_balance(amount)
+        pending = _get_pending()
+        send_message(
+            f"✅ Punkt startowy ustawiony: <b>{amount:+.0f} PLN</b>\n\n"
+            + format_summary_message(s, pending)
+        )
+    except ValueError:
+        send_message("❌ Podaj liczbę, np. <code>/setbalance -1500</code>")
+
+
+def _cmd_stake(args: str) -> None:
+    coupon_id, amount = _parse_coupon_nr_and_amount(args)
+    if amount is None:
+        send_message(
+            "❌ Nieprawidłowy format.\n"
+            "Użyj: <code>/stake [nr_kuponu] [kwota]</code>\n"
+            "Np. <code>/stake 1 100</code>  lub  <code>/stake 1 0</code>"
+        )
+        return
+    if amount < 0:
+        send_message("❌ Kwota stawki nie może być ujemna.")
+        return
+    if amount == 0:
+        coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
+        send_message(f"ℹ️ Zanotowano: nie grasz na kupon {coupon_label}.")
+        return
+
+    add_stake(amount, coupon_id=coupon_id)
+    s            = get_summary()
+    pending      = _get_pending()
+    coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
+    send_message(
+        f"✅ Stawka na kupon {coupon_label}: <b>-{amount:.0f} PLN</b>\n\n"
+        + format_summary_message(s, pending)
+    )
+
+
+def _cmd_won(args: str) -> None:
+    coupon_id, amount = _parse_coupon_nr_and_amount(args)
+    if amount is None:
+        send_message(
+            "❓ Podaj numer kuponu i kwotę wygranej:\n"
+            "Np. <code>/won 1 350</code>"
+        )
+        return
+    if amount < 0:
+        send_message("❌ Kwota wypłaty nie może być ujemna.")
+        return
+
+    add_payout(amount, coupon_id=coupon_id, note=f"Wygrana kupon #{coupon_id}")
+    s            = get_summary()
+    pending      = _get_pending()
+    coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
+    send_message(
+        f"🏆 Kupon {coupon_label} wygrany! Wypłata: <b>+{amount:.0f} PLN</b>\n\n"
+        + format_summary_message(s, pending)
+    )
+
+
+def _cmd_lost(args: str) -> None:
+    coupon_id    = _parse_coupon_nr(args)
+    coupon_label = f"#{coupon_id}" if coupon_id != "?" else ""
+    s            = get_summary()
+    pending      = _get_pending()
+    send_message(
+        f"😔 Kupon {coupon_label} przegrany. Stawka już zalogowana przez /stake.\n\n"
+        + format_summary_message(s, pending)
+    )
+
+
+# ── Dispatcher ────────────────────────────────────────────────────────────────
+
+def _dispatch(text: str) -> None:
+    text = text.strip()
+    if not text.startswith("/"):
+        send_message(
+            "ℹ️ Używaj komend zaczynających się od /\n"
+            "Wpisz /help żeby zobaczyć listę komend."
+        )
+        return
+
+    parts = text.split(None, 1)
+    cmd   = parts[0].lower().split("@")[0]
+    args  = parts[1] if len(parts) > 1 else ""
+
+    handlers = {
+        "/help":       lambda: _cmd_help(),
+        "/stats":      lambda: _cmd_stats(),
+        "/balance":    lambda: _cmd_balance(),
+        "/pending":    lambda: _cmd_pending(),
+        "/setbalance": lambda: _cmd_setbalance(args),
+        "/stake":      lambda: _cmd_stake(args),
+        "/won":        lambda: _cmd_won(args),
+        "/lost":       lambda: _cmd_lost(args),
+        "/start":      lambda: _cmd_help(),
+        "/payout":     lambda: _cmd_won(args),
+    }
+
+    handler = handlers.get(cmd)
+    if handler:
+        handler()
+    else:
+        send_message(
+            f"❓ Nieznana komenda: <code>{cmd}</code>\n"
+            "Wpisz /help żeby zobaczyć dostępne komendy."
+        )
+
+
+# ── Główna pętla pollingu ─────────────────────────────────────────────────────
+
+def poll_and_respond() -> int:
     """
-    Auto-rozlicza PENDING kupony bez uruchamiania pełnego pollingu bota.
-    Wywoływany przez workflow 'Auto-Resolve Coupons' (python main.py resolve).
+    Sprawdza nowe wiadomości i odpowiada na komendy.
+    Przy każdym wywołaniu auto-rozlicza PENDING kupony.
 
-    Różnica od 'bot':
-      - bot:     getUpdates + auto_resolve + obsługa komend
-      - resolve: tylko auto_resolve — szybszy, bez konieczności TELEGRAM_TOKEN
-                 (ODDS_API_KEY nadal wymagany)
+    v1.6: używa send_resolved_notification() — szczegółowe powiadomienie
+    z listą rozliczonych kuponów (wynik, nogi, finansowe, CLV).
     """
-    log.info("══ RESOLVE: auto-rozliczanie kuponów ════════════")
-    from model.evaluate import auto_resolve_pending_coupons, get_pending_summary
-    from notify.telegram import send_message
-    from notify.finance import get_summary, format_summary_message
-
-    resolved = auto_resolve_pending_coupons()
-    log.info(f"Rozliczono {resolved} kuponów.")
-
-    if resolved > 0:
-        try:
-            pending = get_pending_summary()
-            s       = get_summary()
-            send_message(
-                f"🤖 <b>Auto-rozliczono {resolved} kuponów</b>\n\n"
-                + format_summary_message(s, pending)
-            )
-        except Exception as e:
-            log.warning(f"Nie udało się wysłać powiadomienia Telegram: {e}")
-
-
-MODES = {
-    "fetch":   run_fetch,
-    "train":   run_train,
-    "coupon":  run_coupon,
-    "stats":   run_stats,
-    "bot":     run_bot,
-    "resolve": run_resolve,
-    "full":    lambda: (run_fetch(), run_train(), run_coupon()),
-}
-
-
-def main() -> None:
-    mode = sys.argv[1] if len(sys.argv) > 1 else "coupon"
-
-    if mode not in MODES:
-        log.error(f"Nieznany tryb: '{mode}'. Dostępne: {list(MODES.keys())}")
-        sys.exit(1)
-
-    log.info(f"Tryb: {mode.upper()}")
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        log.warning("Brak TELEGRAM_TOKEN lub TELEGRAM_CHAT_ID – bot wyłączony.")
+        return 0
 
     try:
-        MODES[mode]()
-        log.info(f"✓ Tryb '{mode}' zakończony sukcesem.")
-    except Exception:
-        error = traceback.format_exc()
-        log.error(f"✗ BŁĄD w trybie '{mode}':\n{error}")
-        try:
-            from notify.telegram import send_alert
-            send_alert(f"BŁĄD pipeline [{mode}]:\n{error[:1000]}")
-        except Exception:
-            pass
-        sys.exit(1)
+        from model.evaluate import auto_resolve_pending_coupons
+        resolved = auto_resolve_pending_coupons()
+        if resolved:
+            pending = _get_pending()
+            send_resolved_notification(resolved, get_summary(), pending)
+    except Exception as e:
+        log.warning(f"Auto-resolve error: {e}")
+
+    offset    = _load_offset()
+    updates   = _get_updates(offset)
+    processed = 0
+
+    for update in updates:
+        update_id = update.get("update_id", 0)
+        offset    = update_id + 1
+
+        message = update.get("message", {})
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        text    = message.get("text", "")
+
+        if chat_id != str(TELEGRAM_CHAT_ID):
+            log.warning(f"Wiadomość z nieznanego chat_id: {chat_id} – ignoruję")
+            continue
+
+        if text:
+            log.info(f"Komenda od użytkownika: {text!r}")
+            _dispatch(text)
+            processed += 1
+
+    _save_offset(offset)
+    log.info(f"Przetworzono {processed} wiadomości (nowy offset: {offset})")
+    return processed
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    poll_and_respond()
