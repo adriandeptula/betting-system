@@ -32,10 +32,12 @@ jobs:
 
       - name: Fetch data, odds and update CLV
         env:
-          ODDS_API_KEY:   ${{ secrets.ODDS_API_KEY }}
-          ODDS_API_KEY_2: ${{ secrets.ODDS_API_KEY_2 }}
-          ODDS_API_KEY_3: ${{ secrets.ODDS_API_KEY_3 }}
-          BANKROLL:       ${{ secrets.BANKROLL }}
+          ODDS_API_KEY:     ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY_2:   ${{ secrets.ODDS_API_KEY_2 }}
+          ODDS_API_KEY_3:   ${{ secrets.ODDS_API_KEY_3 }}
+          BANKROLL:         ${{ secrets.BANKROLL }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py fetch
 
       - name: Commit updated data
