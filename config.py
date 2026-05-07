@@ -104,6 +104,11 @@ if BANKROLL <= 0:
 # ── Podatek od wygranych (Polska) ─────────────────────────────────────────────
 TAX_THRESHOLD_PLN = 2280.0
 
+# ── The Odds API /scores limit ───────────────────────────────────────────────
+# Free tier akceptuje daysFrom w zakresie 1-3.
+# Paid tier pozwala na więcej. Zmień na wyższy jeśli masz płatny plan.
+ODDS_API_SCORES_MAX_DAYS = 3
+
 
 # ── Elo rating ────────────────────────────────────────────────────────────────
 ELO_START = 1500
