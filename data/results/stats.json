@@ -1,13 +1,13 @@
 {
-  "total_coupons": 27,
+  "total_coupons": 30,
   "won": 0,
   "lost": 0,
-  "pending": 27,
+  "pending": 30,
   "staked_resolved": 0.0,
   "total_model_return": 0.0,
   "model_roi": 0.0,
   "clv_avg": 0.0,
   "clv_legs": 0,
   "clv_positive_pct": 0.0,
-  "updated_at": "2026-05-05T20:06:18.362427"
+  "updated_at": "2026-05-08T05:32:31.982507"
 }
