@@ -1596,7 +1596,8 @@
         "combined_prob": 0.5181,
         "stake": 5.0,
         "expected_value": 0.2952,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T15:55:48.454788"
       },
       {
         "type": "PODWÓJNY",
