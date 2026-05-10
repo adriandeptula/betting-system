@@ -1071,7 +1071,8 @@
         "combined_prob": 0.693,
         "stake": 5.0,
         "expected_value": 0.3237,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685289"
       },
       {
         "type": "PODWÓJNY",
@@ -1127,7 +1128,8 @@
         "combined_prob": 0.4226,
         "stake": 5.0,
         "expected_value": 0.6574,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685372"
       },
       {
         "type": "POTRÓJNY",
@@ -1244,7 +1246,8 @@
         "combined_prob": 0.6914,
         "stake": 5.0,
         "expected_value": 0.3136,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685447"
       },
       {
         "type": "PODWÓJNY",
@@ -1300,7 +1303,8 @@
         "combined_prob": 0.4226,
         "stake": 5.0,
         "expected_value": 0.6574,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685508"
       },
       {
         "type": "POTRÓJNY",
@@ -1417,7 +1421,8 @@
         "combined_prob": 0.6968,
         "stake": 5.0,
         "expected_value": 0.3169,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685556"
       },
       {
         "type": "PODWÓJNY",
@@ -1552,7 +1557,8 @@
         "combined_prob": 0.102,
         "stake": 5.0,
         "expected_value": 1.3773,
-        "result": "PENDING"
+        "result": "LOST",
+        "resolved_at": "2026-05-10T14:54:19.685598"
       }
     ]
   },
