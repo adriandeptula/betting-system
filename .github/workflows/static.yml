@@ -30,15 +30,17 @@ jobs:
           SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          echo "Struktura plików w repozytorium:"
-          ls -R
-          
-          # To polecenie automatycznie znajdzie plik i podstawi dane, 
-          # niezależnie od tego, w jakim folderze on siedzi:
+          # Znajdź plik niezależnie od ścieżki i wykonaj zamianę
           find . -name "supabase-client.js" -exec sed -i "s|__SUPABASE_URL__|${SUPABASE_URL}|g" {} +
           find . -name "supabase-client.js" -exec sed -i "s|__SUPABASE_ANON_KEY__|${SUPABASE_ANON_KEY}|g" {} +
-          
-          echo "✅ Gotowe"
+
+          # Weryfikacja (szukamy pliku i sprawdzamy czy zawiera placeholder)
+          FILE_PATH=$(find . -name "supabase-client.js")
+          if grep -q '__SUPABASE_URL__\|__SUPABASE_ANON_KEY__' "$FILE_PATH"; then
+            echo "ERROR: Secrets nie zostały wstrzyknięte do $FILE_PATH!" >&2
+            exit 1
+          fi
+          echo "✅ Dane wstrzyknięte poprawnie do: $FILE_PATH"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
