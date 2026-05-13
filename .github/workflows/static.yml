@@ -1,43 +1,55 @@
-# Simple workflow for deploying static content to GitHub Pages
 name: Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
   deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Inject Supabase credentials into supabase-client.js
+        env:
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          # Dwa osobne sed — bezpieczniejsze niż multi-line z backslash
+          sed -i "s|__SUPABASE_URL__|${SUPABASE_URL}|g"           webapp/js/supabase-client.js
+          sed -i "s|__SUPABASE_ANON_KEY__|${SUPABASE_ANON_KEY}|g" webapp/js/supabase-client.js
+
+          # Weryfikacja — żaden placeholder nie może pozostać
+          if grep -q '__SUPABASE_URL__\|__SUPABASE_ANON_KEY__' webapp/js/supabase-client.js; then
+            echo "ERROR: Secrets nie zostały wstrzyknięte!" >&2
+            echo "Sprawdź GitHub Secrets: SUPABASE_URL i SUPABASE_ANON_KEY" >&2
+            exit 1
+          fi
+          echo "✅ Supabase credentials wstrzyknięte poprawnie"
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
           path: './webapp'
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
